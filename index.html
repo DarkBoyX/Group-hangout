@@ -128,6 +128,24 @@ button:focus-visible,.item:focus-visible{outline:2px solid #d4d4d8;outline-offse
 @media(min-width:980px){.side{width:360px}}
 @media(max-width:380px){.nav button{font-size:12px;padding:12px 2px}.top{padding:12px}.body{padding:12px}}
 @media(max-height:480px){.auth{padding:16px}.mark,.sub{display:none}}
+
+.i{display:inline-flex;width:20px;height:20px}
+.i svg,.av svg{width:100%;height:100%;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.av svg{width:22px;height:22px;stroke:#f2f2f4}
+img.av{object-fit:cover;display:block}
+.nav button{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:12px}
+.round .i{width:22px;height:22px}
+.ttl{display:flex;align-items:center;justify-content:center;gap:10px}
+.ttl .av{width:34px;height:34px;font-size:14px;flex:none}
+.ttl .av svg{width:18px;height:18px}
+.ttl span{overflow:hidden;text-overflow:ellipsis}
+.empty::before{content:"";display:block;width:44px;height:44px;margin:0 auto 12px;font-size:0;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b6b72' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z'/%3E%3C/svg%3E") center/contain no-repeat}
+.gicon{display:flex;flex-direction:column;align-items:center;gap:12px;margin-bottom:6px}
+.gprev{width:104px;height:104px;border-radius:50%;padding:0;overflow:hidden;background:var(--panel2);color:#8c8c92;border:2px dashed #4a4a50;display:flex;align-items:center;justify-content:center}
+.gprev .i{width:34px;height:34px}
+.gprev img{width:100%;height:100%;object-fit:cover;display:block}
+.acts.center{justify-content:center}
+@media(min-width:760px){.ttl{justify-content:flex-start}}
 </style>
 </head>
 <body>
@@ -145,6 +163,7 @@ const e=document.createElement(t);
 for(const a in p||{}){
 if(a==="class")e.className=p[a];
 else if(a==="text")e.textContent=p[a];
+else if(a==="html")e.innerHTML=p[a];
 else if(a.startsWith("on"))e[a]=p[a];
 else e.setAttribute(a,p[a]);
 }
@@ -152,6 +171,38 @@ k.flat().forEach(c=>c!=null&&e.append(c));
 return e;
 }
 const pair=(a,b)=>[a,b].sort().join("__");
+
+const SVG={
+chat:'<svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>',
+search:'<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>',
+users:'<svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+bell:'<svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
+send:'<svg viewBox="0 0 24 24"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>',
+image:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>'
+};
+function ic(n){return h("span",{class:"i",html:SVG[n]})}
+function avatar(label,icon,group){
+if(icon&&icon.startsWith("data:"))return h("img",{class:"av",src:icon,alt:""});
+if(group)return h("div",{class:"av",style:"background:"+shade(label),html:SVG.users});
+return h("div",{class:"av",text:label[0].toUpperCase(),style:"background:"+shade(label)});
+}
+function toIcon(file){
+return new Promise((res,rej)=>{
+const img=new Image();
+const url=URL.createObjectURL(file);
+img.onload=()=>{
+const n=128,c=document.createElement("canvas");
+c.width=n;c.height=n;
+const x=c.getContext("2d");
+const m=Math.min(img.width,img.height);
+x.drawImage(img,(img.width-m)/2,(img.height-m)/2,m,m,0,0,n,n);
+URL.revokeObjectURL(url);
+res(c.toDataURL("image/jpeg",0.8));
+};
+img.onerror=()=>{URL.revokeObjectURL(url);rej(new Error("bad image"))};
+img.src=url;
+});
+}
 
 function logo(){return h("div",{class:"hero"},h("div",{class:"mark"},h("i"),h("i"),h("i")),h("div",{class:"logo",text:"Group Hangout"}))}
 function shade(s){let n=0;for(const c of s)n+=c.charCodeAt(0);return"linear-gradient(135deg,hsl(0 0% "+(40+n%20)+"%),hsl(0 0% 14%))"}
@@ -241,7 +292,7 @@ draw("chats");
 
 function updateBell(){document.querySelectorAll(".badge").forEach(b=>{b.textContent=incoming.length||""})}
 function bell(){
-const b=h("button",{class:"ghost bell","aria-label":"Notifications",onclick:openNotes},"\u{1F514}",h("span",{class:"badge"}));
+const b=h("button",{class:"ghost bell","aria-label":"Notifications",onclick:openNotes},ic("bell"),h("span",{class:"badge"}));
 setTimeout(updateBell,0);
 return b;
 }
@@ -309,15 +360,15 @@ shell();
 const side=root.querySelector(".side");
 side.textContent="";
 body=h("div",{class:"body"});
-const names={chats:"\u{1F4AC} Chats",find:"\u{1F50D} Find",groups:"\u{1F465} Groups"};
-tabsEl=h("div",{class:"nav"},Object.keys(names).map(k=>h("button",{class:k===tab?"on":"",text:names[k],onclick:()=>draw(k)})));
+const names={chats:["chat","Chats"],find:["search","Find"],groups:["users","Groups"]};
+tabsEl=h("div",{class:"nav"},Object.keys(names).map(k=>h("button",{class:k===tab?"on":"",onclick:()=>draw(k)},ic(names[k][0]),h("span",{text:names[k][1]}))));
 side.append(h("div",{class:"top"},h("b",{text:"@"+me}),pill(),bell(),h("button",{class:"ghost",text:"Log out",onclick:logout})),body,tabsEl);
 ({chats:tabChats,find:tabFind,groups:tabGroups})[tab]();
 }
 
 function row(label,subtext,onclick,extra,icon){
 const el=h("div",{class:"item"+(onclick?"":" static"),onclick},
-h("div",{class:"av"+(icon?" ico":""),text:icon||label[0].toUpperCase(),style:"background:"+shade(label)}),
+icon===undefined?avatar(label):avatar(label,icon,true),
 h("div",{class:"grow"},h("div",{text:label}),subtext?h("div",{class:"muted",text:subtext}):null),
 extra);
 if(onclick){el.tabIndex=0;el.setAttribute("role","button");el.onkeydown=e=>{if(e.key==="Enter")onclick()}}
@@ -335,7 +386,7 @@ const t=q.value.trim().toLowerCase();
 const gs=groups.filter(g=>!t||g.name.toLowerCase().includes(t));
 const fs=[...friends].sort().filter(n=>!t||n.includes(t));
 if(!gs.length&&!fs.length){out.append(h("div",{class:"empty",text:"No matches."}));return}
-if(gs.length)out.append(h("h3",{text:"Groups"}),gs.map(g=>row(g.name,g.members.length+" members",()=>openChat(g.id,g.name,true,g.icon),null,g.icon)));
+if(gs.length)out.append(h("h3",{text:"Groups"}),gs.map(g=>row(g.name,g.members.length+" members",()=>openChat(g.id,g.name,true,g.icon),null,g.icon||"")));
 if(fs.length)out.append(h("h3",{text:"Friends"}),fs.map(n=>row(n,"",()=>openChat("dm_"+pair(me,n),n,false))));
 };
 q.oninput=paint;
@@ -369,30 +420,32 @@ q.oninput=paint;
 paint();
 }
 
-const ICONS=["\u{1F4AC}","\u{1F3AE}","\u{1F3B5}","\u26BD","\u{1F355}","\u{1F4DA}","\u2708\uFE0F","\u{1F3AC}","\u{1F525}","\u{1F319}","\u2B50","\u{1F3E0}"];
-let gForm={icon:ICONS[0],name:""};
+let gForm={icon:"",name:""};
 
 function tabGroups(){paint=()=>{};groupStep1()}
 
 function groupStep1(){
 body.textContent="";
-const grid=h("div",{class:"icons"});
 const name=h("input",{placeholder:"Group name",maxlength:"30",value:gForm.name});
 const err=h("div",{class:"err"});
 const hasFriends=friends.length>0;
 const next=h("button",{class:"full",text:hasFriends?"Next":"Create group"});
-const fill=()=>{
-grid.textContent="";
-ICONS.forEach(i=>grid.append(h("button",{class:"ic"+(i===gForm.icon?" on":""),text:i,onclick:()=>{gForm.icon=i;fill()}})));
+const file=h("input",{type:"file",accept:"image/*",style:"display:none"});
+file.onchange=async()=>{
+const f=file.files[0];
+if(!f)return;
+try{gForm.icon=await toIcon(f);gForm.name=name.value;groupStep1()}catch(e){err.textContent="Could not use that image."}
 };
+const prev=h("button",{class:"gprev",type:"button","aria-label":"Choose group image",onclick:()=>file.click()},gForm.icon?h("img",{src:gForm.icon,alt:""}):ic("image"));
+const actions=h("div",{class:"acts center"},h("button",{class:"ghost sm",type:"button",text:gForm.icon?"Change image":"Choose image",onclick:()=>file.click()}));
+if(gForm.icon)actions.append(h("button",{class:"ghost sm",type:"button",text:"Remove",onclick:()=>{gForm.icon="";gForm.name=name.value;groupStep1()}}));
 next.onclick=()=>{
 const n=name.value.trim();
 if(!n){err.textContent="Give the group a name.";return}
 gForm.name=n;
 if(friends.length)groupStep2();else createGroup([],next,err);
 };
-fill();
-body.append(h("div",{class:"step",text:hasFriends?"Step 1 of 2: icon and name":"New group: icon and name"}),h("h3",{text:"Group icon"}),grid,h("h3",{text:"Group name"}),name,err,next);
+body.append(h("div",{class:"step",text:hasFriends?"Step 1 of 2: image and name":"New group: image and name"}),h("h3",{text:"Group image (optional)"}),h("div",{class:"gicon"},prev,actions),file,h("h3",{text:"Group name"}),name,err,next);
 }
 
 function groupStep2(){
@@ -419,7 +472,7 @@ try{
 const p=ref.set({name:g.name,icon:g.icon,owner:me,members:[me,...list]});
 if(navigator.onLine)await p;else p.catch(()=>{});
 picked=new Set();
-gForm={icon:ICONS[0],name:""};
+gForm={icon:"",name:""};
 draw("chats");
 openChat(ref.id,g.name,true,g.icon);
 }catch(e){err.textContent="Could not create the group.";btn.disabled=false}
@@ -447,9 +500,9 @@ try{await db.collection(path).add({from:me,text:t,t:Date.now()})}catch(e){inp.va
 };
 inp.onkeydown=e=>{if(e.key==="Enter")send()};
 host.append(
-h("div",{class:"top"},h("button",{class:"ghost back",text:"Back",onclick:closePane}),h("b",{class:"ttl",text:(icon?icon+" ":"")+title}),isGroup?h("span"):h("div",{class:"acts"},h("button",{class:"ghost sm",text:"Call",onclick:()=>reach(title,"call")}),h("button",{class:"ghost sm",text:"Text",onclick:()=>reach(title,"sms")}),h("button",{class:"ghost sm",text:"Edit #",onclick:()=>askNum(title,phones()[title])}))),
+h("div",{class:"top"},h("button",{class:"ghost back",text:"Back",onclick:closePane}),h("b",{class:"ttl"},isGroup?avatar(title,icon||"",true):avatar(title),h("span",{text:title})),isGroup?h("span"):h("div",{class:"acts"},h("button",{class:"ghost sm",text:"Call",onclick:()=>reach(title,"call")}),h("button",{class:"ghost sm",text:"Text",onclick:()=>reach(title,"sms")}),h("button",{class:"ghost sm",text:"Edit #",onclick:()=>askNum(title,phones()[title])}))),
 list,
-h("div",{class:"send"},inp,h("button",{class:"round","aria-label":"Send",text:"\u2191",onclick:send})));
+h("div",{class:"send"},inp,h("button",{class:"round","aria-label":"Send",onclick:send},ic("send"))));
 if(matchMedia("(hover:hover)").matches)inp.focus();
 let seen=0;
 chatUnsub=db.collection(path).orderBy("t").limit(300).onSnapshot({includeMetadataChanges:true},s=>{
