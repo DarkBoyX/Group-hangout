@@ -7,6 +7,10 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg">
 <meta name="theme-color" content="#09090a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="icon-192.png">
 <style>
 :root{--bg:#09090a;--panel:rgba(30,30,33,.72);--panel2:#26262a;--line:rgba(255,255,255,.09);--text:#ececee;--muted:#8e8e95;--btn:#e4e4e7;--btntext:#09090a;--bad:#d4d4d8;color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 html{scroll-padding-top:env(safe-area-inset-top,0px);height:100%}
@@ -83,6 +87,47 @@ h3{margin:16px 0 8px;font-size:12px;color:var(--muted);font-weight:700;letter-sp
 .pill{font-size:12px;padding:4px 10px;border-radius:99px;border:1px solid var(--line);color:var(--muted);margin-left:auto;margin-right:10px}
 .pill.on{color:#e4e4e7;border-color:#8a8a92}
 .pill.off{color:#a8a8af;border-style:dashed}
+.icons{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px}
+.ic{padding:10px 0;font-size:22px;background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+.ic.on{background:#3b3b40;box-shadow:inset 0 0 0 2px #d4d4d8;transform:scale(1.08)}
+.ico{font-size:22px}
+.bell{position:relative;padding:10px 12px}
+.badge{position:absolute;top:-5px;right:-5px;min-width:19px;height:19px;border-radius:10px;background:#fff;color:#09090a;font-size:11px;display:flex;align-items:center;justify-content:center;font-weight:800;padding:0 5px;animation:pop .3s both}
+.badge:empty{display:none}
+.step{color:var(--muted);font-size:13px;margin-bottom:6px}
+
+:root{padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px)}
+@supports(height:100dvh){html,body{height:100dvh}}
+#root{max-width:none;flex-direction:row;overflow-y:auto}
+.auth{margin:auto;width:calc(100% - 32px);max-width:440px}
+#root.app{max-width:1180px;margin:0 auto;overflow:hidden}
+.side{display:flex;flex-direction:column;width:100%;min-width:0;height:100%}
+.main{display:none;flex-direction:column;flex:1;min-width:0;height:100%}
+.app.open .main{display:flex}
+.app.open .side{display:none}
+.ph{margin:auto;text-align:center;padding:30px}
+.ph .mark{margin-bottom:18px}
+.phtitle{font-size:26px;font-weight:800;margin-bottom:6px}
+.item{animation:rise .35s both}
+.day{align-self:center;font-size:12px;color:var(--muted);background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:99px;padding:3px 12px;margin:10px 0 4px}
+.b.cont{margin-top:-3px}
+.b.old{animation:none}
+.round{width:46px;height:46px;border-radius:50%;padding:0;font-size:22px;flex:none;line-height:1}
+.send input{border-radius:99px;padding:13px 18px}
+button:focus-visible,.item:focus-visible{outline:2px solid #d4d4d8;outline-offset:2px}
+@media(hover:none){.item:hover{transform:none;background:var(--panel);border-color:var(--line)}button:hover{filter:none}}
+@media(min-width:760px){
+#root.app{height:calc(100% - 32px);margin:16px auto;border:1px solid var(--line);border-radius:26px;background:rgba(13,13,15,.62);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:0 30px 80px rgba(0,0,0,.55)}
+.side{width:320px;flex:none;border-right:1px solid var(--line)}
+.main{display:flex}
+.app.open .side{display:flex}
+.back{display:none}
+.ttl{text-align:left}
+.b{max-width:64%}
+}
+@media(min-width:980px){.side{width:360px}}
+@media(max-width:380px){.nav button{font-size:12px;padding:12px 2px}.top{padding:12px}.body{padding:12px}}
+@media(max-height:480px){.auth{padding:16px}.mark,.sub{display:none}}
 </style>
 </head>
 <body>
@@ -93,7 +138,7 @@ h3{margin:16px 0 8px;font-size:12px;color:var(--muted);font-weight:700;letter-sp
 <script>
 const root=document.getElementById("root");
 let db=null,uid=null,me=null,view="chats",body=null,tabsEl=null,subs=[],chatUnsub=null;
-let friends=[],groups=[],profiles=[],picked=new Set(),paint=()=>{};
+let friends=[],groups=[],profiles=[],incoming=[],outgoing=[],picked=new Set(),paint=()=>{},notesPaint=()=>{};
 
 function h(t,p,...k){
 const e=document.createElement(t);
@@ -130,9 +175,10 @@ if(!num){num=askNum(n,"");if(!num)return}
 location.href=(kind==="call"?"tel:":"sms:")+num;
 }
 
-function showMessage(t){root.textContent="";root.append(h("div",{class:"auth"},logo(),h("div",{class:"sub",text:t})))}
+function showMessage(t){root.className="";root.textContent="";root.append(h("div",{class:"auth"},logo(),h("div",{class:"sub",text:t})))}
 
 function showAuth(mode){
+root.className="";
 root.textContent="";
 const err=h("div",{class:"err"});
 const f={};
@@ -179,7 +225,7 @@ await db.collection("profiles").doc(u).set({username:u,uid:cred.user.uid});
 function logout(){
 subs.forEach(u=>u());subs=[];
 if(chatUnsub){chatUnsub();chatUnsub=null}
-friends=[];groups=[];profiles=[];picked=new Set();me=null;
+friends=[];groups=[];profiles=[];incoming=[];outgoing=[];picked=new Set();me=null;
 auth.signOut();
 }
 
@@ -188,33 +234,111 @@ subs.forEach(u=>u());subs=[];
 subs.push(db.collection("friends").where("members","array-contains",me).onSnapshot(s=>{friends=s.docs.map(d=>d.data().members.find(x=>x!==me)).filter(Boolean);paint()}));
 subs.push(db.collection("groups").where("members","array-contains",me).onSnapshot(s=>{groups=s.docs.map(d=>({id:d.id,...d.data()}));paint()}));
 subs.push(db.collection("profiles").limit(500).onSnapshot(s=>{profiles=s.docs.map(d=>d.data().username);paint()}));
+subs.push(db.collection("requests").where("to","==",me).onSnapshot(s=>{incoming=s.docs.map(d=>d.data()).filter(r=>r.status==="pending");updateBell();paint();notesPaint()}));
+subs.push(db.collection("requests").where("from","==",me).onSnapshot(s=>{outgoing=s.docs.map(d=>d.data());paint()}));
 draw("chats");
+}
+
+function updateBell(){document.querySelectorAll(".badge").forEach(b=>{b.textContent=incoming.length||""})}
+function bell(){
+const b=h("button",{class:"ghost bell","aria-label":"Notifications",onclick:openNotes},"\u{1F514}",h("span",{class:"badge"}));
+setTimeout(updateBell,0);
+return b;
+}
+
+async function respond(u,ok){
+const ref=db.collection("requests").doc(u+"__"+me);
+try{
+if(ok){
+const b=db.batch();
+b.set(db.collection("friends").doc(pair(me,u)),{members:[me,u].sort()});
+b.update(ref,{status:"accepted"});
+await b.commit();
+}else await ref.update({status:"blocked"});
+}catch(e){}
+}
+
+function placeholder(){return h("div",{class:"ph"},h("div",{class:"mark"},h("i"),h("i"),h("i")),h("div",{class:"phtitle",text:"Group Hangout"}),h("div",{class:"muted",text:"Pick a chat to start talking."}))}
+
+function shell(){
+if(root.querySelector(".side"))return;
+root.textContent="";
+root.className="app";
+root.append(h("div",{class:"side"}),h("div",{class:"main"},placeholder()));
+}
+
+function closePane(){
+if(chatUnsub){chatUnsub();chatUnsub=null}
+notesPaint=()=>{};
+root.classList.remove("open");
+const m=root.querySelector(".main");
+m.textContent="";
+m.append(placeholder());
+}
+
+function pane(){
+if(chatUnsub){chatUnsub();chatUnsub=null}
+notesPaint=()=>{};
+const m=root.querySelector(".main");
+m.textContent="";
+root.classList.add("open");
+return m;
+}
+
+function openNotes(){
+const m=pane();
+const nb=h("div",{class:"body"});
+m.append(h("div",{class:"top"},h("button",{class:"ghost back",text:"Back",onclick:closePane}),h("b",{class:"ttl",text:"Notifications"}),h("span")),nb);
+notesPaint=()=>{
+nb.textContent="";
+if(!incoming.length){nb.append(h("div",{class:"empty",text:"No notifications."}));return}
+incoming.forEach(r=>{
+const acc=h("button",{class:"sm",text:"Accept"});
+const blk=h("button",{class:"ghost sm",text:"Block"});
+acc.onclick=()=>{acc.disabled=true;blk.disabled=true;respond(r.from,true)};
+blk.onclick=()=>{acc.disabled=true;blk.disabled=true;respond(r.from,false)};
+nb.append(row(r.from,"sent you a friend request",null,h("div",{class:"acts"},acc,blk)));
+});
+};
+notesPaint();
 }
 
 function draw(tab){
 view=tab;
-root.textContent="";
+shell();
+const side=root.querySelector(".side");
+side.textContent="";
 body=h("div",{class:"body"});
-const names={chats:"Chats",find:"Find friends",groups:"Groups"};
+const names={chats:"\u{1F4AC} Chats",find:"\u{1F50D} Find",groups:"\u{1F465} Groups"};
 tabsEl=h("div",{class:"nav"},Object.keys(names).map(k=>h("button",{class:k===tab?"on":"",text:names[k],onclick:()=>draw(k)})));
-root.append(h("div",{class:"top"},h("b",{text:"@"+me}),pill(),h("button",{class:"ghost",text:"Log out",onclick:logout})),body,tabsEl);
+side.append(h("div",{class:"top"},h("b",{text:"@"+me}),pill(),bell(),h("button",{class:"ghost",text:"Log out",onclick:logout})),body,tabsEl);
 ({chats:tabChats,find:tabFind,groups:tabGroups})[tab]();
 }
 
-function row(label,subtext,onclick,extra){
-return h("div",{class:"item"+(onclick?"":" static"),onclick},
-h("div",{class:"av",text:label[0].toUpperCase(),style:"background:"+shade(label)}),
+function row(label,subtext,onclick,extra,icon){
+const el=h("div",{class:"item"+(onclick?"":" static"),onclick},
+h("div",{class:"av"+(icon?" ico":""),text:icon||label[0].toUpperCase(),style:"background:"+shade(label)}),
 h("div",{class:"grow"},h("div",{text:label}),subtext?h("div",{class:"muted",text:subtext}):null),
 extra);
+if(onclick){el.tabIndex=0;el.setAttribute("role","button");el.onkeydown=e=>{if(e.key==="Enter")onclick()}}
+return el;
 }
 
 function tabChats(){
+const q=h("input",{placeholder:"Search chats"});
+const out=h("div");
+body.append(q,out);
 paint=()=>{
-body.textContent="";
-if(!friends.length&&!groups.length){body.append(h("div",{class:"empty",text:"No chats yet. Add friends in Find friends, or create a group."}));return}
-if(groups.length)body.append(h("h3",{text:"Groups"}),groups.map(g=>row(g.name,g.members.length+" members",()=>openChat(g.id,g.name,true))));
-if(friends.length)body.append(h("h3",{text:"Friends"}),[...friends].sort().map(n=>row(n,"",()=>openChat("dm_"+pair(me,n),n,false))));
+out.textContent="";
+if(!friends.length&&!groups.length){out.append(h("div",{class:"empty",text:"No chats yet. Add friends in Find, or create a group."}));return}
+const t=q.value.trim().toLowerCase();
+const gs=groups.filter(g=>!t||g.name.toLowerCase().includes(t));
+const fs=[...friends].sort().filter(n=>!t||n.includes(t));
+if(!gs.length&&!fs.length){out.append(h("div",{class:"empty",text:"No matches."}));return}
+if(gs.length)out.append(h("h3",{text:"Groups"}),gs.map(g=>row(g.name,g.members.length+" members",()=>openChat(g.id,g.name,true,g.icon),null,g.icon)));
+if(fs.length)out.append(h("h3",{text:"Friends"}),fs.map(n=>row(n,"",()=>openChat("dm_"+pair(me,n),n,false))));
 };
+q.oninput=paint;
 paint();
 }
 
@@ -228,10 +352,16 @@ const term=q.value.trim().toLowerCase();
 const list=profiles.filter(n=>n!==me&&(!term||n.includes(term))).sort();
 if(!list.length){out.append(h("div",{class:"empty",text:"No users found."}));return}
 list.forEach(n=>{
-const has=friends.includes(n);
-const btn=h("button",{class:has?"ghost":"",text:has?"Friends":"Add"});
-btn.disabled=has;
-btn.onclick=async()=>{btn.disabled=true;try{await db.collection("friends").doc(pair(me,n)).set({members:[me,n].sort()})}catch(e){btn.disabled=false}};
+const has=friends.includes(n),inc=incoming.some(r=>r.from===n),sent=outgoing.some(r=>r.to===n);
+const btn=h("button",{class:has||sent?"ghost":"",text:has?"Friends":inc?"Accept":sent?"Requested":"Add"});
+btn.disabled=has||(sent&&!inc);
+btn.onclick=async()=>{
+btn.disabled=true;
+if(inc){respond(n,true);return}
+try{await db.collection("requests").doc(me+"__"+n).set({from:me,to:n,status:"pending"})}catch(e){}
+btn.textContent="Requested";
+btn.className="ghost";
+};
 out.append(row(n,"",null,btn));
 });
 };
@@ -239,42 +369,75 @@ q.oninput=paint;
 paint();
 }
 
-function tabGroups(){
-const name=h("input",{placeholder:"Group name"});
-const pick=h("div");
+const ICONS=["\u{1F4AC}","\u{1F3AE}","\u{1F3B5}","\u26BD","\u{1F355}","\u{1F4DA}","\u2708\uFE0F","\u{1F3AC}","\u{1F525}","\u{1F319}","\u2B50","\u{1F3E0}"];
+let gForm={icon:ICONS[0],name:""};
+
+function tabGroups(){paint=()=>{};groupStep1()}
+
+function groupStep1(){
+body.textContent="";
+const grid=h("div",{class:"icons"});
+const name=h("input",{placeholder:"Group name",maxlength:"30",value:gForm.name});
+const err=h("div",{class:"err"});
+const hasFriends=friends.length>0;
+const next=h("button",{class:"full",text:hasFriends?"Next":"Create group"});
+const fill=()=>{
+grid.textContent="";
+ICONS.forEach(i=>grid.append(h("button",{class:"ic"+(i===gForm.icon?" on":""),text:i,onclick:()=>{gForm.icon=i;fill()}})));
+};
+next.onclick=()=>{
+const n=name.value.trim();
+if(!n){err.textContent="Give the group a name.";return}
+gForm.name=n;
+if(friends.length)groupStep2();else createGroup([],next,err);
+};
+fill();
+body.append(h("div",{class:"step",text:hasFriends?"Step 1 of 2: icon and name":"New group: icon and name"}),h("h3",{text:"Group icon"}),grid,h("h3",{text:"Group name"}),name,err,next);
+}
+
+function groupStep2(){
+body.textContent="";
 const err=h("div",{class:"err"});
 const make=h("button",{class:"full",text:"Create group"});
-body.append(name,h("h3",{text:"Add friends"}),pick,err,make);
-paint=()=>{
-pick.textContent="";
-if(!friends.length){pick.append(h("div",{class:"empty",text:"Add friends first to start a group."}));return}
+const back=h("button",{class:"ghost full",text:"Back",onclick:groupStep1});
+body.append(h("div",{class:"step",text:"Step 2 of 2: add members"}),h("h3",{text:"Add friends"}));
 [...friends].sort().forEach(n=>{
 const c=h("input",{type:"checkbox"});
 c.checked=picked.has(n);
 c.onchange=()=>c.checked?picked.add(n):picked.delete(n);
-pick.append(h("label",{class:"chk"},c,h("span",{text:n})));
+body.append(h("label",{class:"chk"},c,h("span",{text:n})));
 });
-};
-make.onclick=async()=>{
-err.textContent="";
-const n=name.value.trim();
-if(!n){err.textContent="Give the group a name.";return}
-if(!picked.size){err.textContent="Pick at least one friend.";return}
-make.disabled=true;
-try{
-const ref=await db.collection("groups").add({name:n,owner:me,members:[me,...picked]});
-picked=new Set();
-openChat(ref.id,n,true);
-}catch(e){err.textContent="Could not create the group.";make.disabled=false}
-};
-paint();
+make.onclick=()=>createGroup([...picked],make,err);
+body.append(err,make,h("div",{style:"height:8px"}),back);
 }
 
-function openChat(id,title,isGroup){
-view="chat";paint=()=>{};
-root.textContent="";
+async function createGroup(list,btn,err){
+btn.disabled=true;
+const g={...gForm};
+const ref=db.collection("groups").doc();
+try{
+const p=ref.set({name:g.name,icon:g.icon,owner:me,members:[me,...list]});
+if(navigator.onLine)await p;else p.catch(()=>{});
+picked=new Set();
+gForm={icon:ICONS[0],name:""};
+draw("chats");
+openChat(ref.id,g.name,true,g.icon);
+}catch(e){err.textContent="Could not create the group.";btn.disabled=false}
+}
+
+function dayLabel(t){
+const d=new Date(t),n=new Date();
+const a=new Date(d.getFullYear(),d.getMonth(),d.getDate()),b=new Date(n.getFullYear(),n.getMonth(),n.getDate());
+const diff=Math.round((b-a)/86400000);
+if(diff===0)return"Today";
+if(diff===1)return"Yesterday";
+return d.toLocaleDateString([],{weekday:"short",month:"short",day:"numeric"});
+}
+
+function openChat(id,title,isGroup,icon){
+const host=pane();
 const list=h("div",{class:"msgs"});
-const inp=h("input",{placeholder:"Message"});
+const inp=h("input",{placeholder:"Message",autocomplete:"off",enterkeyhint:"send"});
 const path="msgs/"+id+"/items";
 const send=async()=>{
 const t=inp.value.trim();
@@ -283,19 +446,27 @@ inp.value="";
 try{await db.collection(path).add({from:me,text:t,t:Date.now()})}catch(e){inp.value=t}
 };
 inp.onkeydown=e=>{if(e.key==="Enter")send()};
-const back=()=>{if(chatUnsub){chatUnsub();chatUnsub=null}draw("chats")};
-root.append(
-h("div",{class:"top"},h("button",{class:"ghost",text:"Back",onclick:back}),h("b",{class:"ttl",text:title}),isGroup?h("span"):h("div",{class:"acts"},h("button",{class:"ghost sm",text:"Call",onclick:()=>reach(title,"call")}),h("button",{class:"ghost sm",text:"Text",onclick:()=>reach(title,"sms")}),h("button",{class:"ghost sm",text:"Edit #",onclick:()=>askNum(title,phones()[title])}))),
+host.append(
+h("div",{class:"top"},h("button",{class:"ghost back",text:"Back",onclick:closePane}),h("b",{class:"ttl",text:(icon?icon+" ":"")+title}),isGroup?h("span"):h("div",{class:"acts"},h("button",{class:"ghost sm",text:"Call",onclick:()=>reach(title,"call")}),h("button",{class:"ghost sm",text:"Text",onclick:()=>reach(title,"sms")}),h("button",{class:"ghost sm",text:"Edit #",onclick:()=>askNum(title,phones()[title])}))),
 list,
-h("div",{class:"send"},inp,h("button",{text:"Send",onclick:send})));
+h("div",{class:"send"},inp,h("button",{class:"round","aria-label":"Send",text:"\u2191",onclick:send})));
+if(matchMedia("(hover:hover)").matches)inp.focus();
+let seen=0;
 chatUnsub=db.collection(path).orderBy("t").limit(300).onSnapshot({includeMetadataChanges:true},s=>{
+const stick=!list.childElementCount||list.scrollHeight-list.scrollTop-list.clientHeight<120;
 list.textContent="";
 if(s.empty)list.append(h("div",{class:"empty",text:"No messages yet. Say hi!"}));
-s.docs.forEach(d=>{
+let prev=null,day="";
+s.docs.forEach((d,i)=>{
 const m=d.data(),mine=m.from===me;
-list.append(h("div",{class:"b "+(mine?"me":"them")},isGroup&&!mine?h("div",{class:"who",text:m.from}):null,h("div",{text:m.text}),h("div",{class:"tm",text:d.metadata.hasPendingWrites?"Sending...":new Date(m.t).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})})));
+const dl=dayLabel(m.t);
+if(dl!==day){list.append(h("div",{class:"day",text:dl}));day=dl;prev=null}
+const cont=prev===m.from;
+list.append(h("div",{class:"b "+(mine?"me":"them")+(cont?" cont":"")+(i<seen?" old":"")},isGroup&&!mine&&!cont?h("div",{class:"who",text:m.from}):null,h("div",{text:m.text}),h("div",{class:"tm",text:d.metadata.hasPendingWrites?"Sending...":new Date(m.t).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})})));
+prev=m.from;
 });
-list.scrollTop=list.scrollHeight;
+seen=s.docs.length;
+if(stick)list.scrollTop=list.scrollHeight;
 });
 }
 
