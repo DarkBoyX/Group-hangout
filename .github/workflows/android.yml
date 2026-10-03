@@ -1,0 +1,374 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/android.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Collect web files
+        run: |
+          mkdir -p www
+          for f in index.html manifest.json icon.svg icon-192.png icon-512.png; do
+            test -f "$f" || { echo "Missing $f in the repo root"; exit 1; }
+            cp "$f" www/
+          done
+
+      - name: Create Android project
+        run: |
+          npm init -y > /dev/null
+          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
+          cat > capacitor.config.json <<'CFG'
+          {"appId":"com.grouphangout.app","appName":"Group Hangout","webDir":"www","backgroundColor":"#09090a"}
+          CFG
+          npx cap add android
+
+      - name: Add Nearby plugin and permissions
+        run: |
+          D=android/app/src/main/java/com/grouphangout/app
+          mkdir -p "$D"
+          cat > "$D/NearbyPlugin.java" <<'JAVA1'
+          package com.grouphangout.app;
+
+          import android.content.pm.PackageManager;
+          import android.os.Build;
+          import androidx.core.content.ContextCompat;
+          import com.getcapacitor.JSArray;
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          import com.google.android.gms.common.api.ApiException;
+          import com.google.android.gms.nearby.Nearby;
+          import com.google.android.gms.nearby.connection.AdvertisingOptions;
+          import com.google.android.gms.nearby.connection.ConnectionInfo;
+          import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback;
+          import com.google.android.gms.nearby.connection.ConnectionResolution;
+          import com.google.android.gms.nearby.connection.ConnectionsClient;
+          import com.google.android.gms.nearby.connection.ConnectionsStatusCodes;
+          import com.google.android.gms.nearby.connection.DiscoveredEndpointInfo;
+          import com.google.android.gms.nearby.connection.DiscoveryOptions;
+          import com.google.android.gms.nearby.connection.EndpointDiscoveryCallback;
+          import com.google.android.gms.nearby.connection.Payload;
+          import com.google.android.gms.nearby.connection.PayloadCallback;
+          import com.google.android.gms.nearby.connection.PayloadTransferUpdate;
+          import com.google.android.gms.nearby.connection.Strategy;
+          import java.nio.charset.StandardCharsets;
+          import java.util.Map;
+          import java.util.Set;
+          import java.util.TreeSet;
+          import java.util.concurrent.ConcurrentHashMap;
+          import org.json.JSONObject;
+
+          @CapacitorPlugin(name = "Nearby")
+          public class NearbyPlugin extends Plugin {
+              static final String SERVICE = "com.grouphangout.app.nearby";
+
+              private ConnectionsClient client;
+              private String myName = "";
+              private boolean running = false;
+              private final Map<String, String> found = new ConcurrentHashMap<>();
+              private final Map<String, String> connected = new ConcurrentHashMap<>();
+              private final Set<String> trying = ConcurrentHashMap.newKeySet();
+
+              public static String[] needed() {
+                  if (Build.VERSION.SDK_INT >= 33) {
+                      return new String[] {
+                          "android.permission.BLUETOOTH_ADVERTISE",
+                          "android.permission.BLUETOOTH_CONNECT",
+                          "android.permission.BLUETOOTH_SCAN",
+                          "android.permission.NEARBY_WIFI_DEVICES"
+                      };
+                  }
+                  if (Build.VERSION.SDK_INT >= 31) {
+                      return new String[] {
+                          "android.permission.BLUETOOTH_ADVERTISE",
+                          "android.permission.BLUETOOTH_CONNECT",
+                          "android.permission.BLUETOOTH_SCAN",
+                          "android.permission.ACCESS_FINE_LOCATION"
+                      };
+                  }
+                  return new String[] { "android.permission.ACCESS_FINE_LOCATION" };
+              }
+
+              private boolean hasPerms() {
+                  for (String p : needed()) {
+                      if (ContextCompat.checkSelfPermission(getContext(), p) != PackageManager.PERMISSION_GRANTED) return false;
+                  }
+                  return true;
+              }
+
+              private final PayloadCallback payloads = new PayloadCallback() {
+                  @Override
+                  public void onPayloadReceived(String id, Payload p) {
+                      if (p.getType() != Payload.Type.BYTES) return;
+                      try {
+                          JSONObject j = new JSONObject(new String(p.asBytes(), StandardCharsets.UTF_8));
+                          String from = connected.get(id);
+                          if (from == null) from = found.get(id);
+                          JSObject o = new JSObject();
+                          o.put("from", from == null ? "" : from);
+                          o.put("text", j.optString("text"));
+                          o.put("t", j.optLong("t", System.currentTimeMillis()));
+                          notifyListeners("message", o);
+                      } catch (Exception ignored) {
+                      }
+                  }
+
+                  @Override
+                  public void onPayloadTransferUpdate(String id, PayloadTransferUpdate u) {}
+              };
+
+              private final ConnectionLifecycleCallback lifecycle = new ConnectionLifecycleCallback() {
+                  @Override
+                  public void onConnectionInitiated(String id, ConnectionInfo info) {
+                      found.put(id, info.getEndpointName());
+                      client.acceptConnection(id, payloads);
+                  }
+
+                  @Override
+                  public void onConnectionResult(String id, ConnectionResolution r) {
+                      trying.remove(id);
+                      String n = found.get(id);
+                      if (r.getStatus().getStatusCode() == ConnectionsStatusCodes.STATUS_OK && n != null) {
+                          connected.put(id, n);
+                      }
+                      emitPeers();
+                  }
+
+                  @Override
+                  public void onDisconnected(String id) {
+                      connected.remove(id);
+                      trying.remove(id);
+                      emitPeers();
+                  }
+              };
+
+              private final EndpointDiscoveryCallback discovery = new EndpointDiscoveryCallback() {
+                  @Override
+                  public void onEndpointFound(String id, DiscoveredEndpointInfo info) {
+                      String n = info.getEndpointName();
+                      found.put(id, n);
+                      if (connected.containsKey(id) || trying.contains(id)) return;
+                      if (myName.compareTo(n) <= 0) {
+                          trying.add(id);
+                          client.requestConnection(myName, id, lifecycle).addOnFailureListener(e -> trying.remove(id));
+                      }
+                  }
+
+                  @Override
+                  public void onEndpointLost(String id) {
+                      trying.remove(id);
+                  }
+              };
+
+              private void emitPeers() {
+                  Set<String> names = new TreeSet<>(connected.values());
+                  JSArray a = new JSArray();
+                  for (String n : names) a.put(n);
+                  JSObject o = new JSObject();
+                  o.put("peers", a);
+                  notifyListeners("peers", o);
+              }
+
+              private void fail(PluginCall call, Exception e) {
+                  if (e instanceof ApiException) {
+                      int c = ((ApiException) e).getStatusCode();
+                      if (c == ConnectionsStatusCodes.STATUS_ALREADY_ADVERTISING || c == ConnectionsStatusCodes.STATUS_ALREADY_DISCOVERING) {
+                          running = true;
+                          call.resolve();
+                          return;
+                      }
+                  }
+                  call.reject(e.getMessage() == null ? "nearby failed" : e.getMessage());
+              }
+
+              @PluginMethod
+              public void start(PluginCall call) {
+                  String name = call.getString("name");
+                  if (name == null || name.isEmpty()) {
+                      call.reject("name");
+                      return;
+                  }
+                  if (!hasPerms()) {
+                      call.reject("permissions");
+                      return;
+                  }
+                  if (running) {
+                      call.resolve();
+                      return;
+                  }
+                  myName = name;
+                  client = Nearby.getConnectionsClient(getContext());
+                  AdvertisingOptions ao = new AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build();
+                  DiscoveryOptions dopt = new DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build();
+                  client
+                      .startAdvertising(myName, SERVICE, lifecycle, ao)
+                      .addOnSuccessListener(u ->
+                          client
+                              .startDiscovery(SERVICE, discovery, dopt)
+                              .addOnSuccessListener(v -> {
+                                  running = true;
+                                  call.resolve();
+                              })
+                              .addOnFailureListener(e -> fail(call, e))
+                      )
+                      .addOnFailureListener(e -> fail(call, e));
+              }
+
+              @PluginMethod
+              public void send(PluginCall call) {
+                  String to = call.getString("to");
+                  String text = call.getString("text");
+                  if (!running || to == null || text == null) {
+                      call.reject("not ready");
+                      return;
+                  }
+                  try {
+                      JSONObject j = new JSONObject();
+                      j.put("text", text);
+                      j.put("t", System.currentTimeMillis());
+                      byte[] b = j.toString().getBytes(StandardCharsets.UTF_8);
+                      int n = 0;
+                      for (Map.Entry<String, String> en : connected.entrySet()) {
+                          if (to.equals(en.getValue())) {
+                              client.sendPayload(en.getKey(), Payload.fromBytes(b));
+                              n++;
+                          }
+                      }
+                      if (n == 0) {
+                          call.reject("not nearby");
+                          return;
+                      }
+                      call.resolve();
+                  } catch (Exception ex) {
+                      call.reject("send failed");
+                  }
+              }
+
+              private void halt() {
+                  if (client != null) {
+                      client.stopAdvertising();
+                      client.stopDiscovery();
+                      client.stopAllEndpoints();
+                  }
+                  running = false;
+                  connected.clear();
+                  found.clear();
+                  trying.clear();
+              }
+
+              @PluginMethod
+              public void stop(PluginCall call) {
+                  halt();
+                  call.resolve();
+              }
+
+              @Override
+              protected void handleOnDestroy() {
+                  halt();
+              }
+          }
+          JAVA1
+          cat > "$D/MainActivity.java" <<'JAVA2'
+          package com.grouphangout.app;
+
+          import android.content.pm.PackageManager;
+          import android.os.Bundle;
+          import androidx.core.app.ActivityCompat;
+          import androidx.core.content.ContextCompat;
+          import com.getcapacitor.BridgeActivity;
+          import java.util.ArrayList;
+          import java.util.List;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  registerPlugin(NearbyPlugin.class);
+                  super.onCreate(savedInstanceState);
+                  List<String> need = new ArrayList<>();
+                  for (String p : NearbyPlugin.needed()) {
+                      if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) need.add(p);
+                  }
+                  if (!need.isEmpty()) {
+                      ActivityCompat.requestPermissions(this, need.toArray(new String[0]), 7);
+                  }
+              }
+          }
+          JAVA2
+          cat > patch_android.py <<'PY'
+          import re, pathlib
+
+          # 1) manifest permissions
+          mp = pathlib.Path("android/app/src/main/AndroidManifest.xml")
+          m = mp.read_text()
+          perms = """    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+              <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" android:maxSdkVersion="32" />
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="32" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+              <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+              <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+          """
+          assert "<application" in m
+          if "BLUETOOTH_SCAN" not in m:
+              m = m.replace("<application", perms + "\n    <application", 1)
+          mp.write_text(m)
+
+          # 2) min SDK 23 (Nearby)
+          vp = pathlib.Path("android/variables.gradle")
+          v = vp.read_text()
+          v = re.sub(r"minSdkVersion\s*=\s*\d+", "minSdkVersion = 23", v)
+          vp.write_text(v)
+
+          # 3) Nearby dependency
+          gp = pathlib.Path("android/app/build.gradle")
+          g = gp.read_text()
+          if "play-services-nearby" not in g:
+              g = re.sub(r"(\ndependencies \{\n)", r'\1    implementation "com.google.android.gms:play-services-nearby:19.1.0"\n', g, count=1)
+              assert "play-services-nearby" in g
+          gp.write_text(g)
+          print("patched")
+          PY
+          python3 patch_android.py
+          npx cap sync android
+
+      - name: Build APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Publish APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk GroupHangout.apk
+          gh release create "apk-${{ github.run_number }}" GroupHangout.apk --target "${{ github.sha }}" --title "Group Hangout APK ${{ github.run_number }}" --notes "Install this APK on an Android phone."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GroupHangout-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
