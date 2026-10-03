@@ -3,6 +3,29 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script>
+/*DEBUG-START (delete this whole script once the app works)*/
+(function(){
+var L=[];
+function show(){
+var d=document.getElementById("dbg");
+if(!d){d=document.createElement("pre");d.id="dbg";d.style.cssText="position:fixed;left:0;right:0;top:0;z-index:99999;margin:0;padding:calc(env(safe-area-inset-top,0px) + 8px) 8px 8px;background:rgba(120,0,0,.92);color:#fff;font:11px/1.35 monospace;white-space:pre-wrap;word-break:break-all;max-height:70%;overflow:auto";(document.body||document.documentElement).appendChild(d)}
+d.textContent=L.join("\n")}
+window.addEventListener("error",function(e){L.push("ERR: "+(e.message||"")+" @"+String(e.filename||"").split("/").pop()+":"+e.lineno+":"+e.colno+(e.target&&e.target.src?" LOAD FAIL "+e.target.src:""));show()},true);
+window.addEventListener("unhandledrejection",function(e){L.push("REJ: "+(e.reason&&(e.reason.stack||e.reason.message)||e.reason));show()});
+setTimeout(function(){
+var r=document.getElementById("root");
+if(!r||!r.children.length){
+L.push("EMPTY ROOT after 3s");
+L.push("firebase: "+typeof window.firebase+" | Capacitor: "+typeof window.Capacitor+" | native: "+(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform()));
+L.push("url: "+location.href);
+L.push("scripts: "+Array.prototype.map.call(document.scripts,function(s){return s.src?s.src.split("/").pop():"inline("+s.text.length+")"}).join(", "));
+show()}
+},3000);
+})();
+/*DEBUG-END*/
+</script>
+
 <title>Group Hangout</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg">
