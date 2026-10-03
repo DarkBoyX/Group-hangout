@@ -386,8 +386,8 @@ const t=q.value.trim().toLowerCase();
 const gs=groups.filter(g=>!t||g.name.toLowerCase().includes(t));
 const fs=[...friends].sort().filter(n=>!t||n.includes(t));
 if(!gs.length&&!fs.length){out.append(h("div",{class:"empty",text:"No matches."}));return}
-if(gs.length)out.append(h("h3",{text:"Groups"}),gs.map(g=>row(g.name,g.members.length+" members",()=>openChat(g.id,g.name,true,g.icon),null,g.icon||"")));
-if(fs.length)out.append(h("h3",{text:"Friends"}),fs.map(n=>row(n,"",()=>openChat("dm_"+pair(me,n),n,false))));
+if(gs.length)out.append(h("h3",{text:"Groups"}),...gs.map(g=>row(g.name,g.members.length+" members",()=>openChat(g.id,g.name,true,g.icon),null,g.icon||"")));
+if(fs.length)out.append(h("h3",{text:"Friends"}),...fs.map(n=>row(n,"",()=>openChat("dm_"+pair(me,n),n,false))));
 };
 q.oninput=paint;
 paint();
