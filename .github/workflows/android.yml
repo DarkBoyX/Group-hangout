@@ -31,6 +31,10 @@ jobs:
             test -f "$f" || { echo "Missing $f in the repo root"; exit 1; }
             cp "$f" www/
           done
+          for f in app auth firestore; do
+            curl -fsSL "https://www.gstatic.com/firebasejs/10.12.2/firebase-$f-compat.js" -o "www/firebase-$f-compat.js"
+          done
+          sed -i 's#https://www.gstatic.com/firebasejs/10.12.2/#./#g' www/index.html
 
       - name: Create Android project
         run: |
