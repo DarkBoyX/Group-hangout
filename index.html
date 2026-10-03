@@ -566,13 +566,13 @@ if(stick)list.scrollTop=list.scrollHeight;
 
 /* ---------- offline nearby text (native Android app only) ---------- */
 const NATIVE=!!(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform());
-const NearbyP=NATIVE?window.Capacitor.registerPlugin("Nearby"):null;
+const NearbyP=NATIVE?(window.Capacitor.registerPlugin?window.Capacitor.registerPlugin("Nearby"):(window.Capacitor.Plugins&&window.Capacitor.Plugins.Nearby)||null):null;
 let near=[],nearHook=()=>{},nearOn=false,nearTry=0,nearTimer=null;
 const nearKey=n=>"gh_near_"+me+"_"+n;
 function nearLoad(n){try{return JSON.parse(localStorage.getItem(nearKey(n))||"[]")}catch(e){return[]}}
 function nearSave(n,m){const a=nearLoad(n);a.push(m);try{localStorage.setItem(nearKey(n),JSON.stringify(a.slice(-200)))}catch(e){}}
 async function startNearby(){
-if(!NATIVE||!me)return;
+if(!NATIVE||!me||!NearbyP)return;
 clearTimeout(nearTimer);
 if(!nearOn){
 nearOn=true;
@@ -582,7 +582,7 @@ NearbyP.addListener("message",e=>{if(!e.from)return;nearSave(e.from,{from:e.from
 try{await NearbyP.start({name:me});nearTry=0}
 catch(e){if(nearTry++<40)nearTimer=setTimeout(startNearby,4000)}
 }
-function stopNearby(){clearTimeout(nearTimer);if(NATIVE&&nearOn)NearbyP.stop().catch(()=>{});near=[]}
+function stopNearby(){clearTimeout(nearTimer);if(NATIVE&&NearbyP&&nearOn)NearbyP.stop().catch(()=>{});near=[]}
 
 function tabNear(){
 const out=h("div");
