@@ -1,4 +1,4 @@
-const C="group-hangout-v3";
+const C="group-hangout-v4";
 self.addEventListener("install",e=>{
 e.waitUntil(caches.open(C).then(c=>c.addAll(["./","index.html","manifest.json","icon.svg","icon-192.png","icon-512.png"])));
 self.skipWaiting();
