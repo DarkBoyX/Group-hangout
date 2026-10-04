@@ -43,10 +43,12 @@ jobs:
         run: |
           npm init -y > /dev/null
           npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
+          if [ -f google-services.json ]; then npm install @capacitor/push-notifications@6; echo "Push notifications: ON"; else echo "Push notifications: OFF (no google-services.json in repo)"; fi
           cat > capacitor.config.json <<'CFG'
           {"appId":"com.grouphangout.app","appName":"Group Hangout","webDir":"www","backgroundColor":"#09090a","android":{"webContentsDebuggingEnabled":true}}
           CFG
           npx cap add android
+          if [ -f google-services.json ]; then cp google-services.json android/app/google-services.json; fi
 
       - name: Add Nearby plugin and permissions
         run: |
@@ -57,6 +59,9 @@ jobs:
 
           import android.content.pm.PackageManager;
           import android.os.Build;
+          import android.os.Handler;
+          import android.os.Looper;
+          import androidx.core.app.ActivityCompat;
           import androidx.core.content.ContextCompat;
           import com.getcapacitor.JSArray;
           import com.getcapacitor.JSObject;
@@ -96,6 +101,8 @@ jobs:
               private final Map<String, String> found = new ConcurrentHashMap<>();
               private final Map<String, String> connected = new ConcurrentHashMap<>();
               private final Set<String> trying = ConcurrentHashMap.newKeySet();
+              private final Handler handler = new Handler(Looper.getMainLooper());
+              private DiscoveryOptions dopts;
 
               public static String[] needed() {
                   if (Build.VERSION.SDK_INT >= 33) {
@@ -158,6 +165,8 @@ jobs:
                       String n = found.get(id);
                       if (r.getStatus().getStatusCode() == ConnectionsStatusCodes.STATUS_OK && n != null) {
                           connected.put(id, n);
+                      } else {
+                          rediscover();
                       }
                       emitPeers();
                   }
@@ -167,6 +176,7 @@ jobs:
                       connected.remove(id);
                       trying.remove(id);
                       emitPeers();
+                      rediscover();
                   }
               };
 
@@ -175,7 +185,7 @@ jobs:
                   public void onEndpointFound(String id, DiscoveredEndpointInfo info) {
                       String n = info.getEndpointName();
                       found.put(id, n);
-                      if (connected.containsKey(id) || trying.contains(id)) return;
+                      if (connected.containsKey(id) || trying.contains(id) || connected.containsValue(n)) return;
                       if (myName.compareTo(n) <= 0) {
                           trying.add(id);
                           client.requestConnection(myName, id, lifecycle).addOnFailureListener(e -> trying.remove(id));
@@ -187,6 +197,15 @@ jobs:
                       trying.remove(id);
                   }
               };
+
+              private void rediscover() {
+                  if (!running || client == null || dopts == null) return;
+                  handler.postDelayed(() -> {
+                      if (!running || client == null) return;
+                      client.stopDiscovery();
+                      client.startDiscovery(SERVICE, discovery, dopts);
+                  }, 1500);
+              }
 
               private void emitPeers() {
                   Set<String> names = new TreeSet<>(connected.values());
@@ -217,6 +236,7 @@ jobs:
                       return;
                   }
                   if (!hasPerms()) {
+                      if (getActivity() != null) ActivityCompat.requestPermissions(getActivity(), needed(), 7);
                       call.reject("permissions");
                       return;
                   }
@@ -227,12 +247,12 @@ jobs:
                   myName = name;
                   client = Nearby.getConnectionsClient(getContext());
                   AdvertisingOptions ao = new AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build();
-                  DiscoveryOptions dopt = new DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build();
+                  dopts = new DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build();
                   client
                       .startAdvertising(myName, SERVICE, lifecycle, ao)
                       .addOnSuccessListener(u ->
                           client
-                              .startDiscovery(SERVICE, discovery, dopt)
+                              .startDiscovery(SERVICE, discovery, dopts)
                               .addOnSuccessListener(v -> {
                                   running = true;
                                   call.resolve();
@@ -279,6 +299,7 @@ jobs:
                       client.stopAllEndpoints();
                   }
                   running = false;
+                  handler.removeCallbacksAndMessages(null);
                   connected.clear();
                   found.clear();
                   trying.clear();
@@ -336,10 +357,12 @@ jobs:
               <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="32" />
               <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
               <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-              <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+              <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
               <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
               <uses-permission android:name="android.permission.RECORD_AUDIO" />
               <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.VIBRATE" />
           """
           assert "<application" in m
           if "BLUETOOTH_SCAN" not in m:
