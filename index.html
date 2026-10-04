@@ -256,6 +256,7 @@ return e;
 const pair=(a,b)=>[a,b].sort().join("__");
 const APP_BUILD=Number("__APP_BUILD__")||0;
 let cfgBase=null,updEl=null;
+const REPO="DarkBoyX/Group-hangout",DEFAULT_APK="https://github.com/"+REPO+"/releases/latest/download/GroupHangout.apk";
 let paintQ=0;const doPaint=()=>{if(paintQ)return;paintQ=requestAnimationFrame(()=>{paintQ=0;try{paint()}catch(e){}})};
 let curChat=null,pendingOpen=null,toastEl=null,toastT=0,curAudio=null,pushOn=false;
 
@@ -616,7 +617,8 @@ const perm=await P.requestPermissions();
 if(perm.receive!=="granted")return;
 pushOn=true;
 P.addListener("registration",t=>{if(uid)db.collection("users").doc(uid).set({fcm:t.value},{merge:true}).catch(()=>{})});
-P.addListener("pushNotificationActionPerformed",a=>{const d=(a.notification&&a.notification.data)||{};if(d.chat)openById(d.chat)});
+P.addListener("pushNotificationActionPerformed",a=>{const d=(a.notification&&a.notification.data)||{};if(d.type==="update")checkRelease();if(d.chat)openById(d.chat)});
+P.addListener("pushNotificationReceived",n=>{const d=(n&&n.data)||{};if(d.type==="update")checkRelease()});
 await P.register();
 }catch(e){}
 }
@@ -1019,7 +1021,25 @@ leave:[[784,0,.1],[587,.1,.1],[440,.2,.2]],
 ring:[[740,0,.2],[988,.24,.2],[740,.7,.2],[988,.94,.2]],
 back:[[440,0,.45],[480,0,.45]]
 };
+function phoneRing(){
+try{
+const ctx=actx=actx||new(window.AudioContext||window.webkitAudioContext)();
+if(ctx.state==="suspended")ctx.resume();
+const t0=ctx.currentTime+.02;
+/* classic phone ring: two bursts of a fast warble on 440 + 480 Hz */
+[0,.55].forEach(off=>{
+const o1=ctx.createOscillator(),o2=ctx.createOscillator(),g=ctx.createGain();
+o1.type="sine";o2.type="sine";o1.frequency.value=440;o2.frequency.value=480;
+o1.connect(g);o2.connect(g);g.connect(ctx.destination);
+g.gain.setValueAtTime(0,t0+off);
+for(let i=0;i<16;i++)g.gain.setValueAtTime(i%2?0:.25,t0+off+i*.025);
+g.gain.setValueAtTime(0,t0+off+.4);
+o1.start(t0+off);o2.start(t0+off);o1.stop(t0+off+.45);o2.stop(t0+off+.45);
+});
+}catch(e){}
+}
 function sfx(name,vol){
+if(name==="ring"){phoneRing();return}
 try{
 const ctx=actx=actx||new(window.AudioContext||window.webkitAudioContext)();
 if(ctx.state==="suspended")ctx.resume();
@@ -1045,7 +1065,7 @@ location.reload();
 }
 function showUpdate(cfg){
 if(updEl)return;
-const go=()=>{if(NATIVE){if(cfg.apk)location.href=cfg.apk}else webReload()};
+const go=()=>{if(NATIVE){location.href=cfg.apk||DEFAULT_APK}else webReload()};
 updEl=h("div",{class:"upd"},
 h("div",{class:"mark"},h("i"),h("i"),h("i")),
 h("div",{class:"phtitle",text:"Update required"}),
@@ -1066,7 +1086,18 @@ if(must)showUpdate(cfg);
 function watchConfig(){
 try{db.doc("config/app").onSnapshot(sn=>{if(!sn.exists)return;if(!NATIVE&&sn.metadata.fromCache)return;needUpdate(sn.data())},()=>{})}catch(e){}
 }
-function startRingtone(){stopRing();sfx("ring");if(navigator.vibrate)navigator.vibrate([300,200,300]);ringTimer=setInterval(()=>{sfx("ring");if(navigator.vibrate)navigator.vibrate([300,200,300])},2400)}
+async function checkRelease(){
+if(!NATIVE||!APP_BUILD||updEl)return;
+try{
+const r=await fetch("https://api.github.com/repos/"+REPO+"/releases/latest",{cache:"no-store"});
+if(!r.ok)return;
+const j=await r.json();
+const n=Number(String(j.tag_name||"").replace(/^apk-/,""));
+if(n>APP_BUILD)showUpdate({apk:DEFAULT_APK});
+}catch(e){}
+}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")checkRelease()});
+function startRingtone(){stopRing();sfx("ring");if(navigator.vibrate)navigator.vibrate([400,150,400]);ringTimer=setInterval(()=>{sfx("ring");if(navigator.vibrate)navigator.vibrate([400,150,400])},3000)}
 function stopRing(){clearInterval(ringTimer);ringTimer=null}
 function hideRing(){stopRing();if(ringEl){ringEl.remove();ringEl=null}}
 function showRing(id,c){
@@ -1307,6 +1338,7 @@ db=firebase.firestore();
 try{db.settings({experimentalAutoDetectLongPolling:true,merge:true})}catch(e){}
 db.enablePersistence({synchronizeTabs:!NATIVE}).catch(()=>{});
 watchConfig();
+checkRelease();setInterval(checkRelease,600000);
 auth.onAuthStateChanged(user=>{
 if(!user){showAuth("login");return}
 uid=user.uid;
