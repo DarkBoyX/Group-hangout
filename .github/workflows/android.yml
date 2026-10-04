@@ -548,14 +548,16 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
 
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GroupHangout-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
       - name: Publish APK
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cp android/app/build/outputs/apk/debug/app-debug.apk GroupHangout.apk
           gh release create "apk-${{ github.run_number }}" GroupHangout.apk --target "${{ github.sha }}" --title "Group Hangout APK ${{ github.run_number }}" --notes "Install this APK on an Android phone."
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: GroupHangout-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
