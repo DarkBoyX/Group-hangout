@@ -317,6 +317,153 @@ jobs:
               }
           }
           JAVA1
+          cat > "$D/CallService.java" <<'JAVA3'
+          package com.grouphangout.app;
+
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.app.Service;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.pm.ServiceInfo;
+          import android.os.Build;
+          import android.os.IBinder;
+          import android.os.PowerManager;
+          import androidx.core.app.NotificationCompat;
+
+          public class CallService extends Service {
+              static final String CH = "ongoing_call";
+              private PowerManager.WakeLock lock;
+
+              @Override
+              public IBinder onBind(Intent i) {
+                  return null;
+              }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  String title = "Voice call";
+                  if (intent != null && intent.getStringExtra("title") != null) title = intent.getStringExtra("title");
+                  NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                  if (Build.VERSION.SDK_INT >= 26) {
+                      nm.createNotificationChannel(new NotificationChannel(CH, "Ongoing call", NotificationManager.IMPORTANCE_LOW));
+                  }
+                  Intent open = new Intent(this, MainActivity.class);
+                  open.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                  PendingIntent pi = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE);
+                  Notification n = new NotificationCompat.Builder(this, CH)
+                      .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+                      .setContentTitle("In a call")
+                      .setContentText(title)
+                      .setOngoing(true)
+                      .setContentIntent(pi)
+                      .setCategory(NotificationCompat.CATEGORY_CALL)
+                      .build();
+                  if (Build.VERSION.SDK_INT >= 30) {
+                      startForeground(4242, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+                  } else {
+                      startForeground(4242, n);
+                  }
+                  if (lock == null) {
+                      PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                      lock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "grouphangout:call");
+                      lock.acquire(4 * 60 * 60 * 1000L);
+                  }
+                  return START_NOT_STICKY;
+              }
+
+              @Override
+              public void onDestroy() {
+                  if (lock != null && lock.isHeld()) lock.release();
+                  lock = null;
+                  super.onDestroy();
+              }
+          }
+          JAVA3
+          cat > "$D/CallKeepPlugin.java" <<'JAVA4'
+          package com.grouphangout.app;
+
+          import android.content.Intent;
+          import androidx.core.content.ContextCompat;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+
+          @CapacitorPlugin(name = "CallKeep")
+          public class CallKeepPlugin extends Plugin {
+              @PluginMethod
+              public void start(PluginCall call) {
+                  try {
+                      Intent i = new Intent(getContext(), CallService.class);
+                      i.putExtra("title", call.getString("title", "Voice call"));
+                      ContextCompat.startForegroundService(getContext(), i);
+                      call.resolve();
+                  } catch (Exception e) {
+                      call.reject(e.getMessage() == null ? "failed" : e.getMessage());
+                  }
+              }
+
+              @PluginMethod
+              public void stop(PluginCall call) {
+                  getContext().stopService(new Intent(getContext(), CallService.class));
+                  call.resolve();
+              }
+          }
+          JAVA4
+          cat > "$D/FilesPlugin.java" <<'JAVA5'
+          package com.grouphangout.app;
+
+          import android.content.ContentResolver;
+          import android.content.ContentValues;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.provider.MediaStore;
+          import android.util.Base64;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          import java.io.OutputStream;
+
+          @CapacitorPlugin(name = "Files")
+          public class FilesPlugin extends Plugin {
+              @PluginMethod
+              public void save(PluginCall call) {
+                  String name = call.getString("name", "file");
+                  String mime = call.getString("mime", "application/octet-stream");
+                  String data = call.getString("data");
+                  if (data == null) {
+                      call.reject("no data");
+                      return;
+                  }
+                  if (Build.VERSION.SDK_INT < 29) {
+                      call.reject("Saving needs Android 10 or newer");
+                      return;
+                  }
+                  try {
+                      byte[] bytes = Base64.decode(data, Base64.DEFAULT);
+                      ContentResolver r = getContext().getContentResolver();
+                      ContentValues v = new ContentValues();
+                      v.put(MediaStore.Downloads.DISPLAY_NAME, name);
+                      v.put(MediaStore.Downloads.MIME_TYPE, mime);
+                      Uri u = r.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                      if (u == null) {
+                          call.reject("could not create file");
+                          return;
+                      }
+                      try (OutputStream os = r.openOutputStream(u)) {
+                          os.write(bytes);
+                      }
+                      call.resolve();
+                  } catch (Exception e) {
+                      call.reject(e.getMessage() == null ? "save failed" : e.getMessage());
+                  }
+              }
+          }
+          JAVA5
           cat > "$D/MainActivity.java" <<'JAVA2'
           package com.grouphangout.app;
 
@@ -332,10 +479,15 @@ jobs:
               @Override
               public void onCreate(Bundle savedInstanceState) {
                   registerPlugin(NearbyPlugin.class);
+                  registerPlugin(CallKeepPlugin.class);
+                  registerPlugin(FilesPlugin.class);
                   super.onCreate(savedInstanceState);
                   List<String> need = new ArrayList<>();
                   for (String p : NearbyPlugin.needed()) {
                       if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) need.add(p);
+                  }
+                  if (android.os.Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, "android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+                      need.add("android.permission.POST_NOTIFICATIONS");
                   }
                   if (!need.isEmpty()) {
                       ActivityCompat.requestPermissions(this, need.toArray(new String[0]), 7);
@@ -363,10 +515,15 @@ jobs:
               <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
               <uses-permission android:name="android.permission.VIBRATE" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
           """
           assert "<application" in m
           if "BLUETOOTH_SCAN" not in m:
               m = m.replace("<application", perms + "\n    <application", 1)
+          if "CallService" not in m:
+              m = m.replace("</application>", '    <service android:name=".CallService" android:foregroundServiceType="microphone" android:exported="false" />\n    </application>', 1)
           mp.write_text(m)
 
           # 2) min SDK 23 (Nearby)
