@@ -186,6 +186,14 @@ img.av{object-fit:cover;display:block}
 .msgs,.body{overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .msgs.dm .who,.b.cont .who{display:none}
 .tx{white-space:pre-wrap}
+.b{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.b.held{box-shadow:0 0 0 2px rgba(255,255,255,.38)}
+.b.gone{opacity:.7;font-style:italic;color:var(--muted)}
+.mctx{position:fixed;z-index:99000;min-width:172px;background:#1c1c20;border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.6);padding:4px;animation:pop .16s cubic-bezier(.2,.9,.3,1.2) both}
+.mctx .mi.bad{color:#ff7b7b}
+.edbar{display:flex;align-items:center;gap:10px;padding:8px 14px;background:#1c1c20;border-top:1px solid var(--line);font-size:13px;color:var(--muted)}
+.edbar b{color:var(--text)}
+.edbar .pv{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mn{background:rgba(255,255,255,.14);border-radius:6px;padding:0 4px;font-weight:700}
 .mn.me{background:#e4e4e7;color:#09090a}
 .b.ping{box-shadow:inset 3px 0 0 #e4e4e7}
@@ -238,6 +246,7 @@ img.av{object-fit:cover;display:block}
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
 const root=document.getElementById("root");
+let hidden=new Set();
 let db=null,uid=null,me=null,view="chats",body=null,tabsEl=null,subs=[],chatUnsub=null;
 let friends=[],groups=[],profiles=[],incoming=[],outgoing=[],picked=new Set(),paint=()=>{},notesPaint=()=>{};
 
@@ -746,9 +755,39 @@ const kb=m.fsize?(m.fsize<10240?(m.fsize/1024).toFixed(1):Math.round(m.fsize/102
 return h("div",{class:"fileb",onclick:()=>saveData(m.file,m.fname||"file")},h("div",{class:"fic"},ic("file")),h("div",{class:"grow"},h("div",{class:"fn",text:m.fname||"File"}),h("div",{class:"muted",text:kb+" - tap to save"})));
 }
 
-function bubble(m,mine){
+let ctxEl=null,ctxHeld=null;
+function closeCtx(){if(ctxEl){ctxEl.remove();ctxEl=null}if(ctxHeld){ctxHeld.classList.remove("held");ctxHeld=null}}
+function showCtx(anchor,mine,items){
+closeCtx();
+const menu=h("div",{class:"mctx"});
+items.forEach(it=>menu.append(h("div",{class:"mi"+(it.bad?" bad":""),onpointerdown:e=>{e.preventDefault();e.stopPropagation()},onclick:e=>{e.preventDefault();e.stopPropagation();const keep=it.fn();if(keep!==true)closeCtx()}},h("span",{text:it.label}))));
+document.body.append(menu);
+ctxEl=menu;ctxHeld=anchor;anchor.classList.add("held");
+const r=anchor.getBoundingClientRect(),mw=menu.offsetWidth,mh=menu.offsetHeight;
+let top=r.bottom+6;
+if(top+mh>innerHeight-12)top=r.top-mh-6;
+if(top<8)top=8;
+let left=mine?r.right-mw:r.left;
+left=Math.max(8,Math.min(left,innerWidth-mw-8));
+menu.style.top=top+"px";menu.style.left=left+"px";
+setTimeout(()=>{const off=e=>{if(ctxEl&&!ctxEl.contains(e.target))closeCtx();removeEventListener("pointerdown",off,true)};addEventListener("pointerdown",off,true)},0);
+}
+function bubble(m,mine,id,onPress){
 const tm=h("div",{class:"tm"});
-const el=h("div",{class:"b"},mine?null:h("div",{class:"who",text:m.from}),m.voice?voiceEl(m):m.img?imgEl(m):m.file?fileEl(m):textEl(m.text||"",m.mentions),m.text?linkPreview(m.text):null,tm);
+const gone=!!m.del;
+const media=m.voice?voiceEl(m):m.img?imgEl(m):m.file?fileEl(m):null;
+const body=gone?h("div",{class:"tx",text:"This message was deleted"}):media||textEl(m.text||"",m.mentions);
+const cap=!gone&&media&&m.text?textEl(m.text,m.mentions):null;
+const el=h("div",{class:"b"+(gone?" gone":"")},mine?null:h("div",{class:"who",text:m.from}),body,cap,(!gone&&m.text)?linkPreview(m.text):null,tm);
+if(onPress&&id){
+let t=0,x0=0,y0=0;
+const stop=()=>{clearTimeout(t);t=0};
+el.addEventListener("pointerdown",e=>{if(e.button>0)return;x0=e.clientX;y0=e.clientY;stop();t=setTimeout(()=>{t=0;el._lp=Date.now();onPress(id,m,el,mine)},430)});
+el.addEventListener("pointermove",e=>{if(t&&(Math.abs(e.clientX-x0)>9||Math.abs(e.clientY-y0)>9))stop()});
+["pointerup","pointercancel","pointerleave"].forEach(ev=>el.addEventListener(ev,stop));
+el.addEventListener("contextmenu",e=>e.preventDefault());
+el.addEventListener("click",e=>{if(el._lp&&Date.now()-el._lp<900){e.preventDefault();e.stopPropagation()}},true);
+}
 return{el,tm};
 }
 
@@ -789,8 +828,56 @@ res.forEach(n=>pop.append(h("div",{class:"mi",onpointerdown:e=>{e.preventDefault
 pop.style.display="block";
 };
 
+/* ---- edit mode ---- */
+let editing=null;
+const edPv=h("span",{class:"pv"});
+const edBar=h("div",{class:"edbar"},h("b",{text:"Editing"}),edPv,h("button",{class:"ghost round","aria-label":"Cancel edit",onclick:()=>endEdit()},ic("x")));
+edBar.style.display="none";
+function endEdit(){editing=null;edBar.style.display="none";inp.value=""}
+function startEdit(id,m){
+editing={id,m};
+edPv.textContent=m.img?"Photo - add or change the text":m.file?"File - add or change the text":(m.text||"");
+inp.value=m.text||"";
+edBar.style.display="flex";
+inp.focus();
+}
+/* ---- long-press menu: edit / delete ---- */
+const hideForMe=(id)=>{
+const key=id2key(id);
+hidden.add(key);
+if(uid)db.collection("users").doc(uid).set({hid:firebase.firestore.FieldValue.arrayUnion(key)},{merge:true}).catch(()=>{});
+if(lastSnap)render(lastSnap);
+};
+const id2key=id=>path+"/"+id;
+const delForAll=(id)=>{
+const D=firebase.firestore.FieldValue.delete();
+db.collection(path).doc(id).update({del:true,edited:D,text:D,voice:D,dur:D,img:D,w:D,h:D,file:D,fname:D,fsize:D,mentions:D}).catch(()=>{alert("Could not delete that message. Check your connection and try again.")});
+};
+function onPress(id,m,el,mine){
+if(navigator.vibrate)navigator.vibrate(12);
+const items=[];
+if(mine&&!m.del&&!m.voice)items.push({label:"Edit",fn:()=>{startEdit(id,m)}});
+if(!m.del&&m.text)items.push({label:"Copy",fn:()=>{try{navigator.clipboard.writeText(m.text)}catch(e){}}});
+items.push({label:"Delete",bad:true,fn:()=>{
+const opts=[{label:"Delete for me",bad:true,fn:()=>{hideForMe(id)}}];
+if(mine&&!m.del)opts.push({label:"Delete for everyone",bad:true,fn:()=>{delForAll(id)}});
+opts.push({label:"Cancel",fn:()=>{}});
+showCtx(el,mine,opts);
+return true;
+}});
+showCtx(el,mine,items);
+}
+
 /* ---- send text ---- */
 const send=()=>{
+if(editing){
+const t=inp.value.trim(),e=editing,old=e.m.text||"";
+if(t===old||(!t&&!(e.m.img||e.m.file))){endEdit();return}
+sfx("send");
+db.collection(path).doc(e.id).update({text:t,edited:true}).catch(()=>{alert("Could not save the edit.")});
+endEdit();
+return;
+}
 const t=inp.value.trim();
 if(!t)return;
 inp.value="";
@@ -880,7 +967,7 @@ host.append(
 h("div",{class:"top"},h("button",{class:"ghost back",text:"Back",onclick:closePane}),h("b",{class:"ttl"},isGroup?avatar(title,icon||"",true):avatar(title),h("span",{text:title})),h("div",{class:"acts"},isGroup?h("button",{class:"ghost sm callbtn","aria-label":"Report",onclick:()=>toast("Reports","Coming soon",null,true)},ic("flag"),"Report"):h("button",{class:"ghost sm callbtn","aria-label":"Voice call",onclick:()=>startCall(id,title,false)},ic("phone")))),
 ban,
 list,
-h("div",{class:"sendwrap"},pop,amenu,bar,recBar,pickImg,pickFile));
+h("div",{class:"sendwrap"},pop,amenu,edBar,bar,recBar,pickImg,pickFile));
 if(matchMedia("(hover:hover)").matches)inp.focus();
 
 /* ---- message list: only new/changed messages touch the DOM ---- */
@@ -888,35 +975,46 @@ const cache=new Map(),dayEls={};
 let lim=60,unsub=null,primed=false;
 const more=h("button",{class:"ghost sm more",text:"Load earlier messages",onclick:()=>{lim+=60;listen()}});
 const emptyEl=h("div",{class:"empty",text:"No messages yet. Say hi!"});
-function listen(){
-if(unsub)unsub();
-unsub=db.collection(path).orderBy("t").limitToLast(lim).onSnapshot({includeMetadataChanges:true},s=>{
-if(primed&&s.docChanges)s.docChanges().forEach(ch=>{if(ch.type==="added"&&!ch.doc.metadata.hasPendingWrites){const q=ch.doc.data();if(q.from!==me&&Date.now()-(q.t||0)<20000)sfx("recv")}});
-primed=true;
+let lastSnap=null;
+function render(s){
 const stick=!list.childElementCount||list.scrollHeight-list.scrollTop-list.clientHeight<120;
 const nodes=[];
 if(s.size>=lim)nodes.push(more);
-if(s.empty)nodes.push(emptyEl);
-let prev=null,day="";
+let prev=null,day="",shown=0;
 const keep=new Set();
+const bodyNodes=[];
 s.docs.forEach(d=>{
+if(hidden.has(id2key(d.id)))return;
 const m=d.data(),mine=m.from===me,pend=d.metadata.hasPendingWrites;
 const dl=dayLabel(m.t||Date.now());
-if(dl!==day){nodes.push(dayEls[dl]||(dayEls[dl]=h("div",{class:"day",text:dl})));day=dl;prev=null}
+if(dl!==day){bodyNodes.push(dayEls[dl]||(dayEls[dl]=h("div",{class:"day",text:dl})));day=dl;prev=null}
+const sig=(m.text||"")+"|"+(m.edited?1:0)+"|"+(m.del?1:0)+"|"+(m.voice?1:0);
 let c=cache.get(d.id);
-if(!c){c=bubble(m,mine);cache.set(d.id,c)}
-const cls="b "+(mine?"me":"them")+(prev===m.from?" cont":"")+(pend?" pending":"")+(m.mentions&&m.mentions.includes(me)?" ping":"");
+if(!c||c.sig!==sig){c=bubble(m,mine,d.id,onPress);c.sig=sig;cache.set(d.id,c)}
+const cls="b "+(mine?"me":"them")+(m.del?" gone":"")+(prev===m.from?" cont":"")+(pend?" pending":"")+(m.mentions&&m.mentions.includes(me)?" ping":"")+(c.el.classList.contains("held")?" held":"");
 if(c.el.className!==cls)c.el.className=cls;
-const tm=pend?(navigator.onLine?"Sending...":"Waiting for connection"):new Date(m.t).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+const when=new Date(m.t).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+const tm=pend?(navigator.onLine?"Sending...":"Waiting for connection"):((m.edited&&!m.del?"edited \u00b7 ":"")+when);
 if(c.tm.textContent!==tm)c.tm.textContent=tm;
-nodes.push(c.el);
+bodyNodes.push(c.el);
 keep.add(d.id);
+shown++;
 prev=m.from;
 });
+if(!shown)nodes.push(emptyEl);
+bodyNodes.forEach(n=>nodes.push(n));
 cache.forEach((_,k)=>{if(!keep.has(k))cache.delete(k)});
 nodes.forEach((n,i)=>{if(list.children[i]!==n)list.insertBefore(n,list.children[i]||null)});
 while(list.children.length>nodes.length)list.lastChild.remove();
 if(stick)list.scrollTop=list.scrollHeight;
+}
+function listen(){
+if(unsub)unsub();
+unsub=db.collection(path).orderBy("t").limitToLast(lim).onSnapshot({includeMetadataChanges:true},s=>{
+if(primed&&s.docChanges)s.docChanges().forEach(ch=>{if(ch.type==="added"&&!ch.doc.metadata.hasPendingWrites){const q=ch.doc.data();if(q.from!==me&&Date.now()-(q.t||0)<20000&&!hidden.has(id2key(ch.doc.id)))sfx("recv")}});
+primed=true;
+lastSnap=s;
+render(s);
 });
 }
 listen();
@@ -1343,6 +1441,7 @@ auth.onAuthStateChanged(user=>{
 if(!user){showAuth("login");return}
 uid=user.uid;
 me=user.email.split("@")[0];
+db.collection("users").doc(uid).get().then(d=>{((d.data()&&d.data().hid)||[]).forEach(x=>hidden.add(x))}).catch(()=>{});
 home();
 });
 }
