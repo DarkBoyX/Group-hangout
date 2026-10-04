@@ -208,6 +208,27 @@ img.av{object-fit:cover;display:block}
 .toast>div{min-width:0}
 .toast .muted{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .more{display:block;margin:0 auto 8px}
+.amenu{right:auto;min-width:190px}
+.upd{position:fixed;inset:0;z-index:99990;background:#09090a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:32px;text-align:center}
+.upd .muted{max-width:340px}
+.lnk{color:#fff;text-decoration:underline;word-break:break-all}
+.yt{width:min(300px,100%);margin-top:6px}
+.ythumb{position:relative;aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden;cursor:pointer}
+.ythumb img{width:100%;height:100%;object-fit:cover;display:block}
+.yplay{position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px 0 0 -26px;border-radius:50%;background:rgba(0,0,0,.65);border:2px solid #fff;display:flex;align-items:center;justify-content:center}
+.yplay .i{width:22px;height:22px}
+.yt iframe{display:block;width:100%;aspect-ratio:16/9;border:0;border-radius:12px;background:#000}
+.yttl{font-weight:600;margin:6px 0 2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.yt .lnk{font-size:13px;font-weight:600}
+.vid{display:block;width:min(300px,100%);margin-top:6px;border-radius:12px;background:#000}
+.pic{display:block;max-width:min(260px,100%);height:auto;border-radius:12px}
+.fileb{display:flex;align-items:center;gap:10px;min-width:190px;cursor:pointer}
+.fic{width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;flex:none}
+.fic .i{width:20px;height:20px}
+.fn{font-weight:600;word-break:break-all}
+.viewer{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.96);display:flex;align-items:center;justify-content:center;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)}
+.viewer>img{max-width:100%;max-height:82%;object-fit:contain}
+.vbar{position:absolute;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 16px);display:flex;gap:10px;justify-content:center}
 </style>
 </head>
 <body>
@@ -233,6 +254,8 @@ k.flat().forEach(c=>c!=null&&e.append(c));
 return e;
 }
 const pair=(a,b)=>[a,b].sort().join("__");
+const APP_BUILD=Number("__APP_BUILD__")||0;
+let cfgBase=null,updEl=null;
 let paintQ=0;const doPaint=()=>{if(paintQ)return;paintQ=requestAnimationFrame(()=>{paintQ=0;try{paint()}catch(e){}})};
 let curChat=null,pendingOpen=null,toastEl=null,toastT=0,curAudio=null,pushOn=false;
 
@@ -249,7 +272,11 @@ mic:'<svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3
 micoff:'<svg viewBox="0 0 24 24"><path d="M1 1l22 22"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><path d="M12 19v4"/></svg>',
 play:'<svg viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z" fill="currentColor"/></svg>',
 pause:'<svg viewBox="0 0 24 24"><path d="M7 4h3v16H7zM14 4h3v16h-3z" fill="currentColor"/></svg>',
-x:'<svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+x:'<svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+plus:'<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+file:'<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
+img:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg>',
+flag:'<svg viewBox="0 0 24 24"><path d="M4 22V4M4 4h13l-2 4 2 4H4"/></svg>'
 };
 function ic(n){return h("span",{class:"i",html:SVG[n]})}
 function avatar(label,icon,group){
@@ -563,13 +590,13 @@ return d.toLocaleDateString([],{weekday:"short",month:"short",day:"numeric"});
 }
 
 function fmt(s){s=Math.max(0,Math.round(s));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
-function beep(){tone();if(navigator.vibrate)navigator.vibrate([120,80,120])}
-function toast(title,sub,fn){
+function beep(){sfx("ping");if(navigator.vibrate)navigator.vibrate([120,80,120])}
+function toast(title,sub,fn,quiet){
 if(toastEl)toastEl.remove();
 clearTimeout(toastT);
 const el=toastEl=h("div",{class:"toast",onclick:()=>{el.remove();if(toastEl===el)toastEl=null;if(fn)fn()}},h("div",{class:"grow"},h("b",{text:title}),h("div",{class:"muted",text:sub})));
 document.body.append(el);
-beep();
+if(!quiet)beep();
 toastT=setTimeout(()=>{el.remove();if(toastEl===el)toastEl=null},6000);
 }
 function openById(id){
@@ -583,6 +610,7 @@ const P=NATIVE&&window.Capacitor.Plugins&&window.Capacitor.Plugins.PushNotificat
 if(!P||pushOn)return;
 try{
 try{await P.createChannel({id:"calls",name:"Calls",description:"Incoming calls",importance:5,visibility:1,vibration:true})}catch(e){}
+try{await P.createChannel({id:"updates",name:"App updates",description:"When a new version is required",importance:4,visibility:1,vibration:true})}catch(e){}
 try{await P.createChannel({id:"pings",name:"Mentions",description:"When someone pings you",importance:4,visibility:1,vibration:true})}catch(e){}
 const perm=await P.requestPermissions();
 if(perm.receive!=="granted")return;
@@ -593,10 +621,21 @@ await P.register();
 }catch(e){}
 }
 
+function linkEl(url,text){
+return h("a",Object.assign({class:"lnk",href:url,rel:"noopener noreferrer"},NATIVE?{}:{target:"_blank"}),text||url);
+}
 function textEl(t,mentions){
 const el=h("div",{class:"tx"});
-t.split(/(@[a-z0-9_]{3,20})/gi).forEach(part=>{
+t.split(/(https?:\/\/[^\s<>]+|@[a-z0-9_]{3,20})/gi).forEach(part=>{
 if(!part)return;
+if(/^https?:\/\//i.test(part)){
+let url=part,tail="";
+const mm=/[.,!?;:)\]]+$/.exec(url);
+if(mm){tail=mm[0];url=url.slice(0,-tail.length)}
+el.append(linkEl(url));
+if(tail)el.append(document.createTextNode(tail));
+return;
+}
 if(/^@[a-z0-9_]{3,20}$/i.test(part)){
 const u=part.slice(1).toLowerCase();
 if(mentions&&mentions.includes(u)){el.append(h("span",{class:"mn"+(u===me?" me":""),text:part}));return}
@@ -604,6 +643,40 @@ if(mentions&&mentions.includes(u)){el.append(h("span",{class:"mn"+(u===me?" me":
 el.append(document.createTextNode(part));
 });
 return el;
+}
+function ytId(u){
+try{
+const x=new URL(u),host=x.hostname.replace(/^(www\.|m\.|music\.)/,"");
+let id=null;
+if(host==="youtu.be")id=x.pathname.slice(1).split("/")[0];
+else if(host==="youtube.com"||host==="youtube-nocookie.com"){
+if(x.pathname==="/watch")id=x.searchParams.get("v");
+else{const mm=/^\/(shorts|embed|live|v)\/([\w-]{11})/.exec(x.pathname);if(mm)id=mm[2]}
+}
+return id&&/^[\w-]{11}$/.test(id)?id:null;
+}catch(e){return null}
+}
+const ytTitles=new Map();
+function ytCard(url,id){
+const title=h("div",{class:"yttl",text:ytTitles.get(id)||"YouTube video"});
+if(!ytTitles.has(id)){
+try{fetch("https://www.youtube.com/oembed?format=json&url="+encodeURIComponent("https://www.youtube.com/watch?v="+id)).then(r=>r.ok?r.json():null).then(j=>{if(j&&j.title){ytTitles.set(id,j.title);title.textContent=j.title}}).catch(()=>{})}catch(e){}
+}
+const thumb=h("div",{class:"ythumb",role:"button","aria-label":"Play video"},h("img",{src:"https://i.ytimg.com/vi/"+id+"/hqdefault.jpg",alt:"",loading:"lazy"}),h("div",{class:"yplay"},ic("play")));
+thumb.onclick=()=>{
+const f=h("iframe",{src:"https://www.youtube-nocookie.com/embed/"+id+"?autoplay=1&playsinline=1&rel=0",allow:"autoplay; encrypted-media; picture-in-picture; fullscreen",allowfullscreen:"",referrerpolicy:"strict-origin-when-cross-origin",title:"YouTube video player"});
+thumb.replaceWith(f);
+};
+return h("div",{class:"yt"},thumb,title,linkEl(url,"Open in YouTube"));
+}
+function linkPreview(text){
+const mm=/https?:\/\/[^\s<>]+/i.exec(text||"");
+if(!mm)return null;
+const url=mm[0].replace(/[.,!?;:)\]]+$/,"");
+const id=ytId(url);
+if(id)return ytCard(url,id);
+if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(url))return h("video",{class:"vid",src:url,controls:"",preload:"none",playsinline:""});
+return null;
 }
 
 function voiceEl(m){
@@ -627,9 +700,53 @@ if(a.paused){curAudio=a;a.play().catch(()=>{})}else a.pause();
 return h("div",{class:"voice"},btn,h("div",{class:"vtrack"},fill),time);
 }
 
+function shrinkImage(file){
+return new Promise((res,rej)=>{
+const url=URL.createObjectURL(file),im=new Image();
+im.onload=()=>{
+const sc=Math.min(1,1024/Math.max(im.width,im.height)),w=Math.max(1,Math.round(im.width*sc)),hh=Math.max(1,Math.round(im.height*sc));
+const cv=document.createElement("canvas");cv.width=w;cv.height=hh;
+cv.getContext("2d").drawImage(im,0,0,w,hh);
+URL.revokeObjectURL(url);
+let q=0.72,out=cv.toDataURL("image/jpeg",q);
+while(out.length>600000&&q>0.35){q-=0.1;out=cv.toDataURL("image/jpeg",q)}
+if(out.length>650000)rej(new Error("big"));else res({url:out,w,h:hh});
+};
+im.onerror=()=>{URL.revokeObjectURL(url);rej(new Error("bad"))};
+im.src=url;
+});
+}
+async function saveData(url,name){
+const mime=(/^data:([^;,]+)/.exec(url)||[])[1]||"application/octet-stream";
+const F=NATIVE&&window.Capacitor.Plugins&&window.Capacitor.Plugins.Files;
+if(F){
+try{await F.save({name,mime,data:url.slice(url.indexOf(",")+1)});toast("Saved","Check your Downloads folder",null,true)}
+catch(e){toast("Could not save",String((e&&e.message)||e),null,true)}
+return;
+}
+const a=document.createElement("a");a.href=url;a.download=name;document.body.append(a);a.click();a.remove();
+}
+function viewImage(m){
+const v=h("div",{class:"viewer",onclick:e=>{if(e.target===v)v.remove()}},
+h("img",{src:m.img,alt:"Photo"}),
+h("div",{class:"vbar"},h("button",{class:"ghost",text:"Save",onclick:()=>saveData(m.img,"photo-"+m.t+".jpg")}),h("button",{text:"Close",onclick:()=>v.remove()})));
+document.body.append(v);
+}
+function imgEl(m){
+const im=h("img",{class:"pic",src:m.img,alt:"Photo"});
+if(m.w&&m.h){im.setAttribute("width",m.w);im.setAttribute("height",m.h)}
+im.loading="lazy";im.decoding="async";
+im.onclick=()=>viewImage(m);
+return im;
+}
+function fileEl(m){
+const kb=m.fsize?(m.fsize<10240?(m.fsize/1024).toFixed(1):Math.round(m.fsize/1024))+" KB":"";
+return h("div",{class:"fileb",onclick:()=>saveData(m.file,m.fname||"file")},h("div",{class:"fic"},ic("file")),h("div",{class:"grow"},h("div",{class:"fn",text:m.fname||"File"}),h("div",{class:"muted",text:kb+" - tap to save"})));
+}
+
 function bubble(m,mine){
 const tm=h("div",{class:"tm"});
-const el=h("div",{class:"b"},mine?null:h("div",{class:"who",text:m.from}),m.voice?voiceEl(m):textEl(m.text||"",m.mentions),tm);
+const el=h("div",{class:"b"},mine?null:h("div",{class:"who",text:m.from}),m.voice?voiceEl(m):m.img?imgEl(m):m.file?fileEl(m):textEl(m.text||"",m.mentions),m.text?linkPreview(m.text):null,tm);
 return{el,tm};
 }
 
@@ -677,6 +794,7 @@ if(!t)return;
 inp.value="";
 hidePop();
 const mentions=isGroup?[...new Set((t.match(/@[a-z0-9_]{3,20}/gi)||[]).map(x=>x.slice(1).toLowerCase()).filter(u=>u!==me&&mem.includes(u)))]:[];
+sfx("send");
 const doc={from:me,text:t,t:Date.now()};
 if(mentions.length)doc.mentions=mentions;
 db.collection(path).add(doc).then(()=>{
@@ -685,18 +803,41 @@ mentions.forEach(u=>db.collection("pings").add({from:me,to:u,chat:id,title,text:
 };
 inp.onkeydown=e=>{if(e.key==="Enter")send()};
 
+/* ---- attachments (+) ---- */
+const sendImage=async f=>{
+try{const r=await shrinkImage(f);sfx("send");db.collection(path).add({from:me,t:Date.now(),img:r.url,w:r.w,h:r.h}).catch(()=>{})}
+catch(e){alert("Could not use that image.")}
+};
+const sendFile=f=>{
+if(/^image\//.test(f.type)){sendImage(f);return}
+if(f.size>450*1024){alert("Files can be up to 450 KB for now. Photos are shrunk automatically.");return}
+const fr=new FileReader();
+fr.onload=()=>{sfx("send");db.collection(path).add({from:me,t:Date.now(),file:fr.result,fname:f.name.slice(0,120),fsize:f.size}).catch(()=>{})};
+fr.readAsDataURL(f);
+};
+const pickImg=h("input",{type:"file",accept:"image/*",style:"display:none"});
+const pickFile=h("input",{type:"file",style:"display:none"});
+pickImg.onchange=()=>{const f=pickImg.files[0];pickImg.value="";if(f)sendImage(f)};
+pickFile.onchange=()=>{const f=pickFile.files[0];pickFile.value="";if(f)sendFile(f)};
+const amenu=h("div",{class:"mpop amenu"});
+amenu.style.display="none";
+const mItem=(label,icon,fn)=>h("div",{class:"mi",onpointerdown:e=>{e.preventDefault();amenu.style.display="none";fn()}},icon,h("span",{text:label}));
+amenu.append(mItem("Photo",ic("img"),()=>pickImg.click()),mItem("File",ic("file"),()=>pickFile.click()));
+const plusBtn=h("button",{class:"ghost round","aria-label":"Add photo or file",onclick:()=>{hidePop();amenu.style.display=amenu.style.display==="none"?"block":"none"}},ic("plus"));
+inp.addEventListener("focus",()=>{amenu.style.display="none"});
+
 /* ---- voice messages ---- */
 let rec=null;
 const recTime=h("span",{class:"rtime",text:"0:00"});
 const micBtn=h("button",{class:"ghost round","aria-label":"Record voice message",onclick:()=>recStart()},ic("mic"));
 const sendBtn=h("button",{class:"round","aria-label":"Send",onclick:send},ic("send"));
-const bar=h("div",{class:"send"},inp,micBtn,sendBtn);
+const bar=h("div",{class:"send"},plusBtn,inp,micBtn,sendBtn);
 const cancelBtn=h("button",{class:"ghost round","aria-label":"Cancel recording",onclick:()=>recStop(false)},ic("x"));
 const okBtn=h("button",{class:"round","aria-label":"Send voice message",onclick:()=>recStop(true)},ic("send"));
 const recBar=h("div",{class:"send rec"},cancelBtn,h("i",{class:"rdot"}),recTime,h("span",{class:"grow"}),okBtn);
 recBar.style.display="none";
 const showBar=()=>{recBar.style.display="none";bar.style.display="flex"};
-const showRec=()=>{hidePop();bar.style.display="none";recBar.style.display="flex"};
+const showRec=()=>{hidePop();amenu.style.display="none";bar.style.display="none";recBar.style.display="flex"};
 function recStop(sendIt){
 if(!rec)return;
 rec.send=sendIt;
@@ -724,6 +865,7 @@ if(!r.send||r.dur<1||!r.chunks.length)return;
 const blob=new Blob(r.chunks,{type:mr.mimeType||mt||"audio/webm"});
 const url=await new Promise(res=>{const f=new FileReader();f.onload=()=>res(f.result);f.onerror=()=>res("");f.readAsDataURL(blob)});
 if(!url||url.length>700000){alert("That voice message is too long. Keep it under a minute.");return}
+sfx("send");
 db.collection(path).add({from:me,t:Date.now(),voice:url,dur:r.dur}).catch(()=>{});
 };
 mr.start();
@@ -733,20 +875,22 @@ showRec();
 }
 
 host.append(
-h("div",{class:"top"},h("button",{class:"ghost back",text:"Back",onclick:closePane}),h("b",{class:"ttl"},isGroup?avatar(title,icon||"",true):avatar(title),h("span",{text:title})),h("div",{class:"acts"},isGroup?null:h("button",{class:"ghost sm callbtn","aria-label":"Voice call",onclick:()=>startCall(id,title,false)},ic("phone")))),
+h("div",{class:"top"},h("button",{class:"ghost back",text:"Back",onclick:closePane}),h("b",{class:"ttl"},isGroup?avatar(title,icon||"",true):avatar(title),h("span",{text:title})),h("div",{class:"acts"},isGroup?h("button",{class:"ghost sm callbtn","aria-label":"Report",onclick:()=>toast("Reports","Coming soon",null,true)},ic("flag"),"Report"):h("button",{class:"ghost sm callbtn","aria-label":"Voice call",onclick:()=>startCall(id,title,false)},ic("phone")))),
 ban,
 list,
-h("div",{class:"sendwrap"},pop,bar,recBar));
+h("div",{class:"sendwrap"},pop,amenu,bar,recBar,pickImg,pickFile));
 if(matchMedia("(hover:hover)").matches)inp.focus();
 
 /* ---- message list: only new/changed messages touch the DOM ---- */
 const cache=new Map(),dayEls={};
-let lim=60,unsub=null;
+let lim=60,unsub=null,primed=false;
 const more=h("button",{class:"ghost sm more",text:"Load earlier messages",onclick:()=>{lim+=60;listen()}});
 const emptyEl=h("div",{class:"empty",text:"No messages yet. Say hi!"});
 function listen(){
 if(unsub)unsub();
 unsub=db.collection(path).orderBy("t").limitToLast(lim).onSnapshot({includeMetadataChanges:true},s=>{
+if(primed&&s.docChanges)s.docChanges().forEach(ch=>{if(ch.type==="added"&&!ch.doc.metadata.hasPendingWrites){const q=ch.doc.data();if(q.from!==me&&Date.now()-(q.t||0)<20000)sfx("recv")}});
+primed=true;
 const stick=!list.childElementCount||list.scrollHeight-list.scrollTop-list.clientHeight<120;
 const nodes=[];
 if(s.size>=lim)nodes.push(more);
@@ -866,7 +1010,63 @@ function liveSub(id){if(!id.startsWith("dm_"))return"";const c=calls[id],ms=c?li
 function nameOf(id,c){if(id.startsWith("dm_"))return(c.invited||[]).find(x=>x!==me)||"Friend";const g=groups.find(x=>x.id===id);return g?g.name:"Group"}
 
 function tone(){try{actx=actx||new(window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),g=actx.createGain();o.frequency.value=440;g.gain.value=.08;o.connect(g);g.connect(actx.destination);o.start();o.stop(actx.currentTime+.25)}catch(e){}}
-function startRingtone(){stopRing();tone();ringTimer=setInterval(()=>{tone();if(navigator.vibrate)navigator.vibrate(200)},1400)}
+const SFX={
+send:[[880,0,.07],[1175,.06,.1]],
+recv:[[660,0,.08],[880,.09,.12]],
+ping:[[988,0,.1],[1319,.1,.2]],
+join:[[523,0,.1],[659,.1,.1],[784,.2,.18]],
+leave:[[784,0,.1],[587,.1,.1],[440,.2,.2]],
+ring:[[740,0,.2],[988,.24,.2],[740,.7,.2],[988,.94,.2]],
+back:[[440,0,.45],[480,0,.45]]
+};
+function sfx(name,vol){
+try{
+const ctx=actx=actx||new(window.AudioContext||window.webkitAudioContext)();
+if(ctx.state==="suspended")ctx.resume();
+const t0=ctx.currentTime+.02,v=vol||(name==="ring"?.2:.12);
+(SFX[name]||[]).forEach(n=>{
+const o=ctx.createOscillator(),g=ctx.createGain();
+o.type="sine";o.frequency.setValueAtTime(n[0],t0+n[1]);
+g.gain.setValueAtTime(.0001,t0+n[1]);
+g.gain.exponentialRampToValueAtTime(v,t0+n[1]+.015);
+g.gain.exponentialRampToValueAtTime(.0001,t0+n[1]+n[2]);
+o.connect(g);g.connect(ctx.destination);
+o.start(t0+n[1]);o.stop(t0+n[1]+n[2]+.05);
+});
+}catch(e){}
+}
+["pointerdown","keydown","touchstart"].forEach(ev=>addEventListener(ev,()=>{try{actx=actx||new(window.AudioContext||window.webkitAudioContext)();if(actx.state==="suspended")actx.resume()}catch(e){}},{once:true,passive:true}));
+async function webReload(){
+try{
+if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();await Promise.all(rs.map(r=>r.unregister()))}
+if(window.caches){const ks=await caches.keys();await Promise.all(ks.map(k=>caches.delete(k)))}
+}catch(e){}
+location.reload();
+}
+function showUpdate(cfg){
+if(updEl)return;
+const go=()=>{if(NATIVE){if(cfg.apk)location.href=cfg.apk}else webReload()};
+updEl=h("div",{class:"upd"},
+h("div",{class:"mark"},h("i"),h("i"),h("i")),
+h("div",{class:"phtitle",text:"Update required"}),
+h("div",{class:"muted",text:NATIVE?"A new version of Group Hangout is ready. You need to update before you can keep using the app.":"A new version of Group Hangout is ready. Reload to keep using it."}),
+h("button",{text:NATIVE?"Update now":"Reload",onclick:go}),
+NATIVE?h("div",{class:"muted",text:"The download starts in your browser. When it finishes, open the file and tap Install."}):null);
+document.body.append(updEl);
+}
+function needUpdate(cfg){
+if(!cfg)return;
+const stamp=cfg.updatedAt&&cfg.updatedAt.toMillis?cfg.updatedAt.toMillis():0;
+let must=false;
+if(NATIVE)must=APP_BUILD>0&&APP_BUILD<(cfg.minBuild||0);
+else if(cfgBase===null)cfgBase=stamp;
+else must=stamp>cfgBase;
+if(must)showUpdate(cfg);
+}
+function watchConfig(){
+try{db.doc("config/app").onSnapshot(sn=>{if(!sn.exists)return;if(!NATIVE&&sn.metadata.fromCache)return;needUpdate(sn.data())},()=>{})}catch(e){}
+}
+function startRingtone(){stopRing();sfx("ring");if(navigator.vibrate)navigator.vibrate([300,200,300]);ringTimer=setInterval(()=>{sfx("ring");if(navigator.vibrate)navigator.vibrate([300,200,300])},2400)}
 function stopRing(){clearInterval(ringTimer);ringTimer=null}
 function hideRing(){stopRing();if(ringEl){ringEl.remove();ringEl=null}}
 function showRing(id,c){
@@ -895,6 +1095,38 @@ if(sig!==lastSig){lastSig=sig;doPaint();bannerPaint()}
 }
 setInterval(()=>{if(db&&me)onCalls()},5000);
 
+const CallKeep=NATIVE&&window.Capacitor.Plugins?window.Capacitor.Plugins.CallKeep:null;
+function keepAlive(on,title){
+try{
+if(CallKeep)Promise.resolve(on?CallKeep.start({title}):CallKeep.stop()).catch(()=>{});
+if("mediaSession" in navigator){
+if(on){navigator.mediaSession.metadata=new MediaMetadata({title:"In a call",artist:title});navigator.mediaSession.playbackState="playing"}
+else{navigator.mediaSession.playbackState="none";navigator.mediaSession.metadata=null}
+}
+}catch(e){}
+}
+function bgTick(fn,ms){
+try{
+const url=URL.createObjectURL(new Blob(["setInterval(function(){postMessage(1)},"+ms+")"],{type:"text/javascript"}));
+const w=new Worker(url);
+w.onmessage=()=>fn();
+return()=>{w.terminate();URL.revokeObjectURL(url)};
+}catch(e){const i=setInterval(fn,ms);return()=>clearInterval(i)}
+}
+async function reviveMic(c){
+const t=c.stream.getAudioTracks()[0];
+if(t&&t.readyState==="live")return;
+try{
+const ns=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+const nt=ns.getAudioTracks()[0];
+nt.enabled=!c.muted;
+nt.onended=()=>{if(call===c)reviveMic(c)};
+Object.values(c.peers).forEach(p=>{const sn=p.pc.getSenders().find(x=>x.track&&x.track.kind==="audio")||p.pc.getSenders().find(x=>!x.track);if(sn)sn.replaceTrack(nt).catch(()=>{})});
+c.stream.getTracks().forEach(x=>x.stop());
+c.stream=ns;
+}catch(e){}
+}
+
 async function upsertMe(ref,inv){
 const f={["p."+me]:SERVER()};
 try{await ref.update(f)}
@@ -914,10 +1146,15 @@ const g=isGroup?groups.find(x=>x.id===id):null;
 const inv=(calls[id]&&calls[id].invited)||(g?g.members:[me,title].sort());
 hideRing();
 const c=call={id,title,stream,peers:{},early:{},unsubs:[],chain:Promise.resolve(),members:[me],t0:Date.now(),since:Date.now()-30000,muted:false};
+c.caller=!(calls[id]&&liveMembers(calls[id]).some(x=>x!==me));
 const ref=db.collection("calls").doc(id);
 try{await upsertMe(ref,inv)}
 catch(e){stream.getTracks().forEach(t=>t.stop());call=null;alert("Could not start the call.");return}
-c.hb=setInterval(()=>ref.update({["p."+me]:SERVER()}).catch(()=>{}),15000);
+c.beat=()=>ref.update({["p."+me]:SERVER()}).catch(()=>{});
+c.hb=bgTick(c.beat,10000);
+const at=stream.getAudioTracks()[0];
+if(at)at.onended=()=>{if(call===c)reviveMic(c)};
+keepAlive(true,title);
 c.tk=setInterval(tick,1000);
 c.unsubs.push(db.collection("calls/"+id+"/sig").where("to","==",me).onSnapshot(sn=>{
 if(call!==c)return;
@@ -944,6 +1181,8 @@ p.audio.play().catch(()=>{});
 pc.onconnectionstatechange=()=>{
 if(call!==c||c.peers[m]!==p)return;
 p.state=pc.connectionState;
+if(p.state==="connected"){c.everUp=true;if(!p.up){p.up=true;sfx("join")}}
+else if((p.state==="disconnected"||p.state==="failed")&&p.up){p.up=false;sfx("leave")}
 clearTimeout(p.dt);
 if(p.state==="failed")closePeer(c,m),setTimeout(syncPeers,2000);
 else if(p.state==="disconnected")p.dt=setTimeout(()=>{if(call===c&&c.peers[m]===p&&pc.connectionState!=="connected"){closePeer(c,m);syncPeers()}},10000);
@@ -1004,7 +1243,7 @@ const d=calls[c.id];
 const live=d?liveMembers(d):[];
 if(!live.includes(me))live.push(me);
 c.members=live;
-Object.keys(c.peers).forEach(m=>{if(!live.includes(m))closePeer(c,m)});
+Object.keys(c.peers).forEach(m=>{if(!live.includes(m)){const q=c.peers[m];if(q&&q.up){q.up=false;sfx("leave")}closePeer(c,m)}});
 live.forEach(m=>{if(m!==me&&!c.peers[m]&&me<m)offerTo(c,m)});
 renderCall();
 }
@@ -1013,6 +1252,7 @@ function tick(){
 const c=call;if(!c||!c.stat)return;
 const others=c.members.filter(x=>x!==me);
 const up=others.some(m=>c.peers[m]&&c.peers[m].state==="connected");
+if(!up&&c.caller&&!c.everUp&&c.id.startsWith("dm_")&&Date.now()-c.t0<45000&&(!c.rbT||Date.now()-c.rbT>3000)){c.rbT=Date.now();sfx("back")}
 if(!others.length){c.stat.textContent=c.id.startsWith("dm_")?"Calling...":"Waiting for others"}
 else if(!up){c.stat.textContent="Connecting..."}
 else{const t=Math.floor((Date.now()-c.t0)/1000);c.stat.textContent=String(Math.floor(t/60)).padStart(2,"0")+":"+String(t%60).padStart(2,"0")}
@@ -1037,7 +1277,8 @@ tick();
 async function leaveCall(){
 const c=call;if(!c)return;
 call=null;
-clearInterval(c.hb);clearInterval(c.tk);
+sfx("leave");
+if(c.hb)c.hb();clearInterval(c.tk);keepAlive(false);
 c.unsubs.forEach(f=>f());
 Object.keys(c.peers).forEach(m=>closePeer(c,m));
 c.stream.getTracks().forEach(t=>t.stop());
@@ -1045,7 +1286,13 @@ if(c.ui)c.ui.remove();
 try{await db.collection("calls").doc(c.id).update({["p."+me]:firebase.firestore.FieldValue.delete()})}catch(e){}
 onCalls();
 }
-addEventListener("pagehide",()=>{if(call&&db)db.collection("calls").doc(call.id).update({["p."+me]:firebase.firestore.FieldValue.delete()}).catch(()=>{})});
+document.addEventListener("visibilitychange",()=>{
+if(document.visibilityState!=="visible"||!call)return;
+reviveMic(call);
+if(call.beat)call.beat();
+onCalls();
+});
+addEventListener("pagehide",e=>{if(e.persisted)return;if(call&&db)db.collection("calls").doc(call.id).update({["p."+me]:firebase.firestore.FieldValue.delete()}).catch(()=>{})});
 
 
 const firebaseConfig={apiKey:"AIzaSyCEas-hEPy9j1xIDexxLI_JXZJVgI3Z-SU",authDomain:"group-24984.firebaseapp.com",projectId:"group-24984",appId:"1:674832131315:web:d98d9a0ca2bace4090c386"};
@@ -1059,6 +1306,7 @@ auth=firebase.auth();
 db=firebase.firestore();
 try{db.settings({experimentalAutoDetectLongPolling:true,merge:true})}catch(e){}
 db.enablePersistence({synchronizeTabs:!NATIVE}).catch(()=>{});
+watchConfig();
 auth.onAuthStateChanged(user=>{
 if(!user){showAuth("login");return}
 uid=user.uid;
