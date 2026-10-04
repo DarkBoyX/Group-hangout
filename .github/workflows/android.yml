@@ -38,6 +38,7 @@ jobs:
             curl -fsSL "https://www.gstatic.com/firebasejs/10.12.2/firebase-$f-compat.js" -o "www/firebase-$f-compat.js"
           done
           sed -i 's#https://www.gstatic.com/firebasejs/10.12.2/#./#g' www/index.html
+          sed -i "s/__APP_BUILD__/${{ github.run_number }}/" www/index.html
 
       - name: Create Android project
         run: |
@@ -555,9 +556,47 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Publish APK
+        id: publish
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cp android/app/build/outputs/apk/debug/app-debug.apk GroupHangout.apk
           gh release create "apk-${{ github.run_number }}" GroupHangout.apk --target "${{ github.sha }}" --title "Group Hangout APK ${{ github.run_number }}" --notes "Install this APK on an Android phone."
+
+      - name: Notify users about the update
+        if: steps.publish.outcome == 'success'
+        continue-on-error: true
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          BUILD: ${{ github.run_number }}
+          APK: https://github.com/${{ github.repository }}/releases/latest/download/GroupHangout.apk
+        run: |
+          if [ -z "$SA" ]; then echo "No FIREBASE_SERVICE_ACCOUNT secret, skipping notification"; exit 0; fi
+          mkdir notify && cd notify
+          npm init -y > /dev/null
+          npm install firebase-admin@12
+          cat > notify.js <<'JS'
+          const admin = require("firebase-admin");
+          admin.initializeApp({ credential: admin.credential.cert(JSON.parse(process.env.SA)) });
+          const db = admin.firestore();
+          (async () => {
+            await db.doc("config/app").set(
+              { minBuild: Number(process.env.BUILD), apk: process.env.APK, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+              { merge: true }
+            );
+            const snap = await db.collection("users").get();
+            const tokens = [...new Set(snap.docs.map((d) => d.get("fcm")).filter(Boolean))];
+            console.log("devices:", tokens.length);
+            for (let i = 0; i < tokens.length; i += 500) {
+              const r = await admin.messaging().sendEachForMulticast({
+                tokens: tokens.slice(i, i + 500),
+                notification: { title: "Update required", body: "A new version of Group Hangout is ready. Open the app to update." },
+                data: { type: "update" },
+                android: { priority: "high", notification: { channelId: "updates", sound: "default" } },
+              });
+              console.log("sent:", r.successCount, "failed:", r.failureCount);
+            }
+          })().catch((e) => { console.error(e); process.exit(1); });
+          JS
+          node notify.js
