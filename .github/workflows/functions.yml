@@ -1,0 +1,55 @@
+name: Deploy Firebase
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "index.js"
+      - "package.json"
+      - "firebase.json"
+      - "firestore.rules"
+      - ".github/workflows/functions.yml"
+
+concurrency:
+  group: firebase-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Prepare functions folder
+        run: |
+          mkdir -p functions
+          cp index.js functions/index.js
+          cp package.json functions/package.json
+          cd functions
+          npm install --no-audit --no-fund
+
+      - name: Save service account
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          test -n "$SA" || { echo "Add the FIREBASE_SERVICE_ACCOUNT secret first"; exit 1; }
+          printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
+
+      - name: Deploy Firestore rules
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+        run: npx -y firebase-tools@13 deploy --only firestore:rules --project group-24984 --non-interactive
+
+      - name: Deploy functions
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+        run: npx -y firebase-tools@13 deploy --only functions --project group-24984 --non-interactive --force
+
+      - name: Remove service account file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sa.json"
