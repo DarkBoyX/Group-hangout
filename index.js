@@ -7,7 +7,7 @@ const db = admin.firestore();
 // Must match your Firestore location. us-central1 works for the default "nam5" setup.
 const REGION = "us-central1";
 
-async function send(username, notification, data, channelId, ttl) {
+async function send(username, notification, data, channelId, ttl, tag) {
   const snap = await db.collection("users").where("username", "==", username).limit(1).get();
   if (snap.empty) return;
   const ref = snap.docs[0].ref;
@@ -21,7 +21,10 @@ async function send(username, notification, data, channelId, ttl) {
       android: {
         priority: "high",
         ttl,
-        notification: { channelId, sound: "default", defaultVibrateTimings: true },
+        notification: Object.assign(
+          { channelId, sound: "default", defaultVibrateTimings: true, visibility: "public", notificationPriority: "PRIORITY_MAX" },
+          tag ? { tag } : {}
+        ),
       },
     });
   } catch (e) {
@@ -39,7 +42,8 @@ exports.onPing = onDocumentCreated({ document: "pings/{id}", region: REGION }, a
     { title: p.chat.startsWith("dm_") ? `${p.from} pinged you` : `${p.from} pinged you in ${p.title}`, body: p.text || "" },
     { type: "ping", chat: p.chat, title: p.title },
     "pings",
-    3600 * 1000
+    3600 * 1000,
+    "ping_" + p.chat
   );
 });
 
@@ -53,18 +57,26 @@ const fresh = (c) => {
 
 exports.onCall = onDocumentWritten({ document: "calls/{id}", region: REGION }, async (event) => {
   const id = event.params.id;
-  if (!id.startsWith("dm_")) return;
   const before = event.data.before.exists ? event.data.before.data() : null;
   const after = event.data.after.exists ? event.data.after.data() : null;
   if (!after) return;
-  if (fresh(before).length) return; // call already active
+  if (fresh(before).length) return;
   const now = fresh(after);
   if (!now.length) return;
   const caller = now[0];
   const targets = (after.invited || []).filter((u) => u !== caller);
+  if (!targets.length) return;
+  let head = `${caller} is calling`;
+  let body = "Tap to answer";
+  let title = caller;
+  if (!id.startsWith("dm_")) {
+    const g = await db.collection("groups").doc(id).get();
+    const name = g.exists ? g.get("name") : "a group";
+    head = `${caller} started a call in ${name}`;
+    body = "Tap to join";
+    title = name;
+  }
   await Promise.all(
-    targets.map((u) =>
-      send(u, { title: `${caller} is calling`, body: "Tap to answer" }, { type: "call", chat: id, title: caller }, "calls", 30000)
-    )
+    targets.map((u) => send(u, { title: head, body }, { type: "call", chat: id, title }, "calls", 30000, "call_" + id))
   );
 });
