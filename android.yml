@@ -1,0 +1,967 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/android.yml"
+      - "index.html"
+      - "manifest.json"
+      - "icon*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Collect web files
+        run: |
+          mkdir -p www
+          for f in index.html manifest.json icon.svg icon-192.png icon-512.png; do
+            test -f "$f" || { echo "Missing $f in the repo root"; exit 1; }
+            cp "$f" www/
+          done
+          for f in app auth firestore; do
+            curl -fsSL "https://www.gstatic.com/firebasejs/10.12.2/firebase-$f-compat.js" -o "www/firebase-$f-compat.js"
+          done
+          sed -i 's#https://www.gstatic.com/firebasejs/10.12.2/#./#g' www/index.html
+          sed -i "s/__APP_BUILD__/${{ github.run_number }}/" www/index.html
+
+      - name: Create Android project
+        run: |
+          npm init -y > /dev/null
+          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
+          if [ -f google-services.json ]; then npm install @capacitor/push-notifications@6; echo "Push notifications: ON"; else echo "Push notifications: OFF (no google-services.json in repo)"; fi
+          cat > capacitor.config.json <<'CFG'
+          {"appId":"com.grouphangout.app","appName":"Group Hangout","webDir":"www","backgroundColor":"#09090a","android":{"webContentsDebuggingEnabled":true}}
+          CFG
+          npx cap add android
+          if [ -f google-services.json ]; then cp google-services.json android/app/google-services.json; fi
+
+      - name: Add Nearby plugin and permissions
+        run: |
+          D=android/app/src/main/java/com/grouphangout/app
+          mkdir -p "$D"
+          cat > "$D/NearbyPlugin.java" <<'JAVA1'
+          package com.grouphangout.app;
+
+          import android.content.pm.PackageManager;
+          import android.os.Build;
+          import android.os.Handler;
+          import android.os.Looper;
+          import androidx.core.app.ActivityCompat;
+          import androidx.core.content.ContextCompat;
+          import com.getcapacitor.JSArray;
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          import com.google.android.gms.common.api.ApiException;
+          import com.google.android.gms.nearby.Nearby;
+          import com.google.android.gms.nearby.connection.AdvertisingOptions;
+          import com.google.android.gms.nearby.connection.ConnectionInfo;
+          import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback;
+          import com.google.android.gms.nearby.connection.ConnectionResolution;
+          import com.google.android.gms.nearby.connection.ConnectionsClient;
+          import com.google.android.gms.nearby.connection.ConnectionsStatusCodes;
+          import com.google.android.gms.nearby.connection.DiscoveredEndpointInfo;
+          import com.google.android.gms.nearby.connection.DiscoveryOptions;
+          import com.google.android.gms.nearby.connection.EndpointDiscoveryCallback;
+          import com.google.android.gms.nearby.connection.Payload;
+          import com.google.android.gms.nearby.connection.PayloadCallback;
+          import com.google.android.gms.nearby.connection.PayloadTransferUpdate;
+          import com.google.android.gms.nearby.connection.Strategy;
+          import java.nio.charset.StandardCharsets;
+          import java.util.Map;
+          import java.util.Set;
+          import java.util.TreeSet;
+          import java.util.concurrent.ConcurrentHashMap;
+          import org.json.JSONObject;
+
+          @CapacitorPlugin(name = "Nearby")
+          public class NearbyPlugin extends Plugin {
+              static final String SERVICE = "com.grouphangout.app.nearby";
+
+              private ConnectionsClient client;
+              private String myName = "";
+              private boolean running = false;
+              private final Map<String, String> found = new ConcurrentHashMap<>();
+              private final Map<String, String> connected = new ConcurrentHashMap<>();
+              private final Set<String> trying = ConcurrentHashMap.newKeySet();
+              private final Handler handler = new Handler(Looper.getMainLooper());
+              private DiscoveryOptions dopts;
+
+              public static String[] needed() {
+                  if (Build.VERSION.SDK_INT >= 33) {
+                      return new String[] {
+                          "android.permission.BLUETOOTH_ADVERTISE",
+                          "android.permission.BLUETOOTH_CONNECT",
+                          "android.permission.BLUETOOTH_SCAN",
+                          "android.permission.NEARBY_WIFI_DEVICES"
+                      };
+                  }
+                  if (Build.VERSION.SDK_INT >= 31) {
+                      return new String[] {
+                          "android.permission.BLUETOOTH_ADVERTISE",
+                          "android.permission.BLUETOOTH_CONNECT",
+                          "android.permission.BLUETOOTH_SCAN",
+                          "android.permission.ACCESS_FINE_LOCATION"
+                      };
+                  }
+                  return new String[] { "android.permission.ACCESS_FINE_LOCATION" };
+              }
+
+              private boolean hasPerms() {
+                  for (String p : needed()) {
+                      if (ContextCompat.checkSelfPermission(getContext(), p) != PackageManager.PERMISSION_GRANTED) return false;
+                  }
+                  return true;
+              }
+
+              private final PayloadCallback payloads = new PayloadCallback() {
+                  @Override
+                  public void onPayloadReceived(String id, Payload p) {
+                      if (p.getType() != Payload.Type.BYTES) return;
+                      try {
+                          JSONObject j = new JSONObject(new String(p.asBytes(), StandardCharsets.UTF_8));
+                          String from = connected.get(id);
+                          if (from == null) from = found.get(id);
+                          JSObject o = new JSObject();
+                          o.put("from", from == null ? "" : from);
+                          o.put("text", j.optString("text"));
+                          o.put("t", j.optLong("t", System.currentTimeMillis()));
+                          notifyListeners("message", o);
+                      } catch (Exception ignored) {
+                      }
+                  }
+
+                  @Override
+                  public void onPayloadTransferUpdate(String id, PayloadTransferUpdate u) {}
+              };
+
+              private final ConnectionLifecycleCallback lifecycle = new ConnectionLifecycleCallback() {
+                  @Override
+                  public void onConnectionInitiated(String id, ConnectionInfo info) {
+                      found.put(id, info.getEndpointName());
+                      client.acceptConnection(id, payloads);
+                  }
+
+                  @Override
+                  public void onConnectionResult(String id, ConnectionResolution r) {
+                      trying.remove(id);
+                      String n = found.get(id);
+                      if (r.getStatus().getStatusCode() == ConnectionsStatusCodes.STATUS_OK && n != null) {
+                          connected.put(id, n);
+                      } else {
+                          rediscover();
+                      }
+                      emitPeers();
+                  }
+
+                  @Override
+                  public void onDisconnected(String id) {
+                      connected.remove(id);
+                      trying.remove(id);
+                      emitPeers();
+                      rediscover();
+                  }
+              };
+
+              private final EndpointDiscoveryCallback discovery = new EndpointDiscoveryCallback() {
+                  @Override
+                  public void onEndpointFound(String id, DiscoveredEndpointInfo info) {
+                      String n = info.getEndpointName();
+                      found.put(id, n);
+                      if (connected.containsKey(id) || trying.contains(id) || connected.containsValue(n)) return;
+                      if (myName.compareTo(n) <= 0) {
+                          trying.add(id);
+                          client.requestConnection(myName, id, lifecycle).addOnFailureListener(e -> trying.remove(id));
+                      }
+                  }
+
+                  @Override
+                  public void onEndpointLost(String id) {
+                      trying.remove(id);
+                  }
+              };
+
+              private void rediscover() {
+                  if (!running || client == null || dopts == null) return;
+                  handler.postDelayed(() -> {
+                      if (!running || client == null) return;
+                      client.stopDiscovery();
+                      client.startDiscovery(SERVICE, discovery, dopts);
+                  }, 1500);
+              }
+
+              private void emitPeers() {
+                  Set<String> names = new TreeSet<>(connected.values());
+                  JSArray a = new JSArray();
+                  for (String n : names) a.put(n);
+                  JSObject o = new JSObject();
+                  o.put("peers", a);
+                  notifyListeners("peers", o);
+              }
+
+              private void fail(PluginCall call, Exception e) {
+                  if (e instanceof ApiException) {
+                      int c = ((ApiException) e).getStatusCode();
+                      if (c == ConnectionsStatusCodes.STATUS_ALREADY_ADVERTISING || c == ConnectionsStatusCodes.STATUS_ALREADY_DISCOVERING) {
+                          running = true;
+                          call.resolve();
+                          return;
+                      }
+                  }
+                  call.reject(e.getMessage() == null ? "nearby failed" : e.getMessage());
+              }
+
+              @PluginMethod
+              public void start(PluginCall call) {
+                  String name = call.getString("name");
+                  if (name == null || name.isEmpty()) {
+                      call.reject("name");
+                      return;
+                  }
+                  if (!hasPerms()) {
+                      if (getActivity() != null) ActivityCompat.requestPermissions(getActivity(), needed(), 7);
+                      call.reject("permissions");
+                      return;
+                  }
+                  if (running) {
+                      call.resolve();
+                      return;
+                  }
+                  myName = name;
+                  client = Nearby.getConnectionsClient(getContext());
+                  AdvertisingOptions ao = new AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build();
+                  dopts = new DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build();
+                  client
+                      .startAdvertising(myName, SERVICE, lifecycle, ao)
+                      .addOnSuccessListener(u ->
+                          client
+                              .startDiscovery(SERVICE, discovery, dopts)
+                              .addOnSuccessListener(v -> {
+                                  running = true;
+                                  call.resolve();
+                              })
+                              .addOnFailureListener(e -> fail(call, e))
+                      )
+                      .addOnFailureListener(e -> fail(call, e));
+              }
+
+              @PluginMethod
+              public void send(PluginCall call) {
+                  String to = call.getString("to");
+                  String text = call.getString("text");
+                  if (!running || to == null || text == null) {
+                      call.reject("not ready");
+                      return;
+                  }
+                  try {
+                      JSONObject j = new JSONObject();
+                      j.put("text", text);
+                      j.put("t", System.currentTimeMillis());
+                      byte[] b = j.toString().getBytes(StandardCharsets.UTF_8);
+                      int n = 0;
+                      for (Map.Entry<String, String> en : connected.entrySet()) {
+                          if (to.equals(en.getValue())) {
+                              client.sendPayload(en.getKey(), Payload.fromBytes(b));
+                              n++;
+                          }
+                      }
+                      if (n == 0) {
+                          call.reject("not nearby");
+                          return;
+                      }
+                      call.resolve();
+                  } catch (Exception ex) {
+                      call.reject("send failed");
+                  }
+              }
+
+              private void halt() {
+                  if (client != null) {
+                      client.stopAdvertising();
+                      client.stopDiscovery();
+                      client.stopAllEndpoints();
+                  }
+                  running = false;
+                  handler.removeCallbacksAndMessages(null);
+                  connected.clear();
+                  found.clear();
+                  trying.clear();
+              }
+
+              @PluginMethod
+              public void stop(PluginCall call) {
+                  halt();
+                  call.resolve();
+              }
+
+              @Override
+              protected void handleOnDestroy() {
+                  halt();
+              }
+          }
+          JAVA1
+          cat > "$D/CallService.java" <<'JAVA3'
+          package com.grouphangout.app;
+
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.app.Service;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.pm.ServiceInfo;
+          import android.os.Build;
+          import android.os.IBinder;
+          import android.os.PowerManager;
+          import androidx.core.app.NotificationCompat;
+
+          public class CallService extends Service {
+              static final String CH = "ongoing_call";
+              private PowerManager.WakeLock lock;
+
+              @Override
+              public IBinder onBind(Intent i) {
+                  return null;
+              }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  String title = "Voice call";
+                  if (intent != null && intent.getStringExtra("title") != null) title = intent.getStringExtra("title");
+                  NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                  if (Build.VERSION.SDK_INT >= 26) {
+                      nm.createNotificationChannel(new NotificationChannel(CH, "Ongoing call", NotificationManager.IMPORTANCE_LOW));
+                  }
+                  Intent open = new Intent(this, MainActivity.class);
+                  open.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                  PendingIntent pi = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE);
+                  Notification n = new NotificationCompat.Builder(this, CH)
+                      .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+                      .setContentTitle("In a call")
+                      .setContentText(title)
+                      .setOngoing(true)
+                      .setContentIntent(pi)
+                      .setCategory(NotificationCompat.CATEGORY_CALL)
+                      .build();
+                  if (Build.VERSION.SDK_INT >= 30) {
+                      startForeground(4242, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+                  } else {
+                      startForeground(4242, n);
+                  }
+                  if (lock == null) {
+                      PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                      lock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "grouphangout:call");
+                      lock.acquire(4 * 60 * 60 * 1000L);
+                  }
+                  return START_NOT_STICKY;
+              }
+
+              @Override
+              public void onDestroy() {
+                  if (lock != null && lock.isHeld()) lock.release();
+                  lock = null;
+                  super.onDestroy();
+              }
+          }
+          JAVA3
+          cat > "$D/CallKeepPlugin.java" <<'JAVA4'
+          package com.grouphangout.app;
+
+          import android.content.Intent;
+          import androidx.core.content.ContextCompat;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+
+          @CapacitorPlugin(name = "CallKeep")
+          public class CallKeepPlugin extends Plugin {
+              @PluginMethod
+              public void start(PluginCall call) {
+                  try {
+                      Intent i = new Intent(getContext(), CallService.class);
+                      i.putExtra("title", call.getString("title", "Voice call"));
+                      ContextCompat.startForegroundService(getContext(), i);
+                      call.resolve();
+                  } catch (Exception e) {
+                      call.reject(e.getMessage() == null ? "failed" : e.getMessage());
+                  }
+              }
+
+              @PluginMethod
+              public void stop(PluginCall call) {
+                  getContext().stopService(new Intent(getContext(), CallService.class));
+                  call.resolve();
+              }
+          }
+          JAVA4
+          cat > "$D/FilesPlugin.java" <<'JAVA5'
+          package com.grouphangout.app;
+
+          import android.content.ContentResolver;
+          import android.content.ContentValues;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.provider.MediaStore;
+          import android.util.Base64;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          import java.io.OutputStream;
+
+          @CapacitorPlugin(name = "Files")
+          public class FilesPlugin extends Plugin {
+              @PluginMethod
+              public void save(PluginCall call) {
+                  String name = call.getString("name", "file");
+                  String mime = call.getString("mime", "application/octet-stream");
+                  String data = call.getString("data");
+                  if (data == null) {
+                      call.reject("no data");
+                      return;
+                  }
+                  if (Build.VERSION.SDK_INT < 29) {
+                      call.reject("Saving needs Android 10 or newer");
+                      return;
+                  }
+                  try {
+                      byte[] bytes = Base64.decode(data, Base64.DEFAULT);
+                      ContentResolver r = getContext().getContentResolver();
+                      ContentValues v = new ContentValues();
+                      v.put(MediaStore.Downloads.DISPLAY_NAME, name);
+                      v.put(MediaStore.Downloads.MIME_TYPE, mime);
+                      Uri u = r.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                      if (u == null) {
+                          call.reject("could not create file");
+                          return;
+                      }
+                      try (OutputStream os = r.openOutputStream(u)) {
+                          os.write(bytes);
+                      }
+                      call.resolve();
+                  } catch (Exception e) {
+                      call.reject(e.getMessage() == null ? "save failed" : e.getMessage());
+                  }
+              }
+          }
+          JAVA5
+          cat > "$D/ShareInPlugin.java" <<'JAVA6'
+          package com.grouphangout.app;
+
+          import android.content.Intent;
+          import com.getcapacitor.Bridge;
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginHandle;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+
+          @CapacitorPlugin(name = "ShareIn")
+          public class ShareInPlugin extends Plugin {
+              private static String pending = null;
+
+              public static void take(Intent i) {
+                  if (i == null || !Intent.ACTION_SEND.equals(i.getAction())) return;
+                  String t = i.getStringExtra(Intent.EXTRA_TEXT);
+                  String s = i.getStringExtra(Intent.EXTRA_SUBJECT);
+                  if (t == null || t.trim().isEmpty()) t = s;
+                  if (t == null || t.trim().isEmpty()) return;
+                  if (s != null && !s.trim().isEmpty() && !t.contains(s)) t = s + "\n" + t;
+                  pending = t.trim();
+                  i.removeExtra(Intent.EXTRA_TEXT);
+                  i.removeExtra(Intent.EXTRA_SUBJECT);
+              }
+
+              public static void fire(Bridge b) {
+                  if (b == null) return;
+                  PluginHandle ph = b.getPlugin("ShareIn");
+                  if (ph != null && ph.getInstance() instanceof ShareInPlugin) {
+                      ((ShareInPlugin) ph.getInstance()).notifyListeners("shared", new JSObject());
+                  }
+              }
+
+              @PluginMethod
+              public void getShared(PluginCall call) {
+                  JSObject o = new JSObject();
+                  if (pending != null) {
+                      o.put("text", pending);
+                      pending = null;
+                  }
+                  call.resolve(o);
+              }
+          }
+          JAVA6
+          cat > "$D/ScreenCapPlugin.java" <<'JAVA7'
+          package com.grouphangout.app;
+
+          import android.app.Activity;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.media.projection.MediaProjectionManager;
+          import androidx.activity.result.ActivityResult;
+          import androidx.core.content.ContextCompat;
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.ActivityCallback;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+
+          @CapacitorPlugin(name = "ScreenCap")
+          public class ScreenCapPlugin extends Plugin {
+              private static ScreenCapPlugin inst;
+              private static PluginCall starting;
+
+              @Override
+              public void load() {
+                  inst = this;
+              }
+
+              @PluginMethod
+              public void start(PluginCall call) {
+                  if (ScreenService.running) {
+                      call.resolve();
+                      return;
+                  }
+                  MediaProjectionManager m = (MediaProjectionManager) getContext().getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+                  startActivityForResult(call, m.createScreenCaptureIntent(), "granted");
+              }
+
+              @ActivityCallback
+              private void granted(PluginCall call, ActivityResult r) {
+                  if (call == null) return;
+                  if (r.getResultCode() != Activity.RESULT_OK || r.getData() == null) {
+                      call.reject("denied");
+                      return;
+                  }
+                  starting = call;
+                  ScreenService.code = r.getResultCode();
+                  ScreenService.data = r.getData();
+                  try {
+                      ContextCompat.startForegroundService(getContext(), new Intent(getContext(), ScreenService.class));
+                  } catch (Exception e) {
+                      starting = null;
+                      call.reject("service");
+                  }
+              }
+
+              @PluginMethod
+              public void stop(PluginCall call) {
+                  getContext().stopService(new Intent(getContext(), ScreenService.class));
+                  call.resolve();
+              }
+
+              static void started(boolean ok, String msg) {
+                  PluginCall c = starting;
+                  starting = null;
+                  if (c == null) return;
+                  if (ok) c.resolve();
+                  else c.reject(msg == null ? "failed" : msg);
+              }
+
+              static void frame(String b64, int w, int h) {
+                  ScreenCapPlugin p = inst;
+                  if (p == null) return;
+                  JSObject o = new JSObject();
+                  o.put("d", b64);
+                  o.put("w", w);
+                  o.put("h", h);
+                  p.notifyListeners("frame", o);
+              }
+
+              static void ended() {
+                  ScreenCapPlugin p = inst;
+                  if (p != null) p.notifyListeners("stopped", new JSObject());
+              }
+          }
+          JAVA7
+          cat > "$D/ScreenService.java" <<'JAVA8'
+          package com.grouphangout.app;
+
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.app.Service;
+          import android.content.ComponentCallbacks;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.pm.ServiceInfo;
+          import android.content.res.Configuration;
+          import android.graphics.Bitmap;
+          import android.graphics.PixelFormat;
+          import android.hardware.display.DisplayManager;
+          import android.hardware.display.VirtualDisplay;
+          import android.media.Image;
+          import android.media.ImageReader;
+          import android.media.projection.MediaProjection;
+          import android.media.projection.MediaProjectionManager;
+          import android.os.Build;
+          import android.os.Handler;
+          import android.os.HandlerThread;
+          import android.os.IBinder;
+          import android.os.SystemClock;
+          import android.util.Base64;
+          import android.util.DisplayMetrics;
+          import android.view.WindowManager;
+          import androidx.core.app.NotificationCompat;
+          import java.io.ByteArrayOutputStream;
+
+          public class ScreenService extends Service {
+              static final String CH = "screen_share";
+              static int code;
+              static Intent data;
+              static volatile boolean running = false;
+
+              private MediaProjection proj;
+              private VirtualDisplay vd;
+              private ImageReader reader;
+              private HandlerThread ht;
+              private Handler hd;
+              private int w, h, dpi;
+              private long lastAt = 0;
+              private boolean dead = false;
+              private boolean sched = false;
+              private final ByteArrayOutputStream bos = new ByteArrayOutputStream(1 << 17);
+
+              private final ComponentCallbacks cb = new ComponentCallbacks() {
+                  @Override
+                  public void onConfigurationChanged(Configuration c) {
+                      if (hd != null) hd.post(ScreenService.this::resize);
+                  }
+
+                  @Override
+                  public void onLowMemory() {}
+              };
+
+              @Override
+              public IBinder onBind(Intent i) {
+                  return null;
+              }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                  if (Build.VERSION.SDK_INT >= 26) {
+                      nm.createNotificationChannel(new NotificationChannel(CH, "Screen sharing", NotificationManager.IMPORTANCE_LOW));
+                  }
+                  Intent open = new Intent(this, MainActivity.class);
+                  open.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                  PendingIntent pi = PendingIntent.getActivity(this, 1, open, PendingIntent.FLAG_IMMUTABLE);
+                  Notification n = new NotificationCompat.Builder(this, CH)
+                      .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+                      .setContentTitle("Sharing your screen")
+                      .setContentText("Tap to return to the call")
+                      .setOngoing(true)
+                      .setContentIntent(pi)
+                      .build();
+                  if (Build.VERSION.SDK_INT >= 29) {
+                      startForeground(4343, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+                  } else {
+                      startForeground(4343, n);
+                  }
+                  if (proj != null) return START_NOT_STICKY;
+                  try {
+                      begin();
+                      running = true;
+                      ScreenCapPlugin.started(true, null);
+                  } catch (Exception e) {
+                      ScreenCapPlugin.started(false, "capture failed");
+                      stopSelf();
+                  }
+                  return START_NOT_STICKY;
+              }
+
+              private void measure() {
+                  DisplayMetrics dm = new DisplayMetrics();
+                  ((WindowManager) getSystemService(Context.WINDOW_SERVICE)).getDefaultDisplay().getRealMetrics(dm);
+                  float s = Math.min(1f, 1000f / Math.max(dm.widthPixels, dm.heightPixels));
+                  w = Math.max(2, Math.round(dm.widthPixels * s) / 2 * 2);
+                  h = Math.max(2, Math.round(dm.heightPixels * s) / 2 * 2);
+                  dpi = dm.densityDpi;
+              }
+
+              private void begin() {
+                  ht = new HandlerThread("screencap");
+                  ht.start();
+                  hd = new Handler(ht.getLooper());
+                  MediaProjectionManager m = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+                  proj = m.getMediaProjection(code, data);
+                  data = null;
+                  proj.registerCallback(new MediaProjection.Callback() {
+                      @Override
+                      public void onStop() {
+                          if (!dead) {
+                              ScreenCapPlugin.ended();
+                              stopSelf();
+                          }
+                      }
+                  }, hd);
+                  measure();
+                  reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2);
+                  reader.setOnImageAvailableListener(r -> handle(), hd);
+                  vd = proj.createVirtualDisplay("share", w, h, dpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader.getSurface(), null, hd);
+                  getApplicationContext().registerComponentCallbacks(cb);
+              }
+
+              private void resize() {
+                  if (dead || vd == null) return;
+                  try {
+                      measure();
+                      ImageReader nr = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2);
+                      nr.setOnImageAvailableListener(r -> handle(), hd);
+                      vd.resize(w, h, dpi);
+                      vd.setSurface(nr.getSurface());
+                      ImageReader old = reader;
+                      reader = nr;
+                      if (old != null) old.close();
+                  } catch (Exception ignored) {
+                  }
+              }
+
+              private void handle() {
+                  if (dead || reader == null) return;
+                  long n = SystemClock.uptimeMillis();
+                  long gap = n - lastAt;
+                  if (gap < 90) {
+                      if (!sched) {
+                          sched = true;
+                          hd.postDelayed(() -> {
+                              sched = false;
+                              handle();
+                          }, 95 - gap);
+                      }
+                      return;
+                  }
+                  Image im = null;
+                  try {
+                      im = reader.acquireLatestImage();
+                      if (im == null) return;
+                      lastAt = n;
+                      Image.Plane p = im.getPlanes()[0];
+                      int rw = p.getRowStride() / p.getPixelStride();
+                      Bitmap full = Bitmap.createBitmap(rw, im.getHeight(), Bitmap.Config.ARGB_8888);
+                      full.copyPixelsFromBuffer(p.getBuffer());
+                      Bitmap out = rw == im.getWidth() ? full : Bitmap.createBitmap(full, 0, 0, im.getWidth(), im.getHeight());
+                      bos.reset();
+                      out.compress(Bitmap.CompressFormat.JPEG, 60, bos);
+                      ScreenCapPlugin.frame(Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP), im.getWidth(), im.getHeight());
+                      if (out != full) out.recycle();
+                      full.recycle();
+                  } catch (Exception ignored) {
+                  } finally {
+                      if (im != null) im.close();
+                  }
+              }
+
+              @Override
+              public void onDestroy() {
+                  dead = true;
+                  running = false;
+                  try {
+                      getApplicationContext().unregisterComponentCallbacks(cb);
+                  } catch (Exception ignored) {
+                  }
+                  try {
+                      if (vd != null) vd.release();
+                  } catch (Exception ignored) {
+                  }
+                  try {
+                      if (reader != null) reader.close();
+                  } catch (Exception ignored) {
+                  }
+                  try {
+                      if (proj != null) proj.stop();
+                  } catch (Exception ignored) {
+                  }
+                  if (ht != null) ht.quitSafely();
+                  super.onDestroy();
+              }
+          }
+          JAVA8
+          cat > "$D/MainActivity.java" <<'JAVA2'
+          package com.grouphangout.app;
+
+          import android.content.Intent;
+          import android.content.pm.PackageManager;
+          import android.os.Bundle;
+          import androidx.core.app.ActivityCompat;
+          import androidx.core.content.ContextCompat;
+          import com.getcapacitor.BridgeActivity;
+          import java.util.ArrayList;
+          import java.util.List;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  registerPlugin(NearbyPlugin.class);
+                  registerPlugin(CallKeepPlugin.class);
+                  registerPlugin(FilesPlugin.class);
+                  registerPlugin(ShareInPlugin.class);
+                  registerPlugin(ScreenCapPlugin.class);
+                  super.onCreate(savedInstanceState);
+                  ShareInPlugin.take(getIntent());
+                  List<String> need = new ArrayList<>();
+                  for (String p : NearbyPlugin.needed()) {
+                      if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) need.add(p);
+                  }
+                  if (android.os.Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, "android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+                      need.add("android.permission.POST_NOTIFICATIONS");
+                  }
+                  if (!need.isEmpty()) {
+                      ActivityCompat.requestPermissions(this, need.toArray(new String[0]), 7);
+                  }
+              }
+
+              @Override
+              protected void onNewIntent(Intent intent) {
+                  super.onNewIntent(intent);
+                  setIntent(intent);
+                  ShareInPlugin.take(intent);
+                  ShareInPlugin.fire(getBridge());
+              }
+          }
+          JAVA2
+          cat > patch_android.py <<'PY'
+          import re, pathlib
+
+          # 1) manifest permissions
+          mp = pathlib.Path("android/app/src/main/AndroidManifest.xml")
+          m = mp.read_text()
+          perms = """    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+              <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" android:maxSdkVersion="32" />
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="32" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+              <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+              <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <uses-permission android:name="android.permission.CAMERA" />
+              <uses-feature android:name="android.hardware.camera" android:required="false" />
+              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.VIBRATE" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+          """
+          assert "<application" in m
+          if "BLUETOOTH_SCAN" not in m:
+              m = m.replace("<application", perms + "\n    <application", 1)
+          if "CallService" not in m:
+              m = m.replace("</application>", '    <service android:name=".CallService" android:foregroundServiceType="microphone" android:exported="false" />\n    </application>', 1)
+          if "ScreenService" not in m:
+              m = m.replace("</application>", '    <service android:name=".ScreenService" android:foregroundServiceType="mediaProjection" android:exported="false" />\n    </application>', 1)
+          # share target: show up in the Android share sheet for text and links
+          if "android.intent.action.SEND" not in m:
+              flt = """        <intent-filter>
+                      <action android:name="android.intent.action.SEND" />
+                      <category android:name="android.intent.category.DEFAULT" />
+                      <data android:mimeType="text/plain" />
+                  </intent-filter>
+              """
+              m = m.replace("</activity>", flt + "</activity>", 1)
+          mp.write_text(m)
+
+          # 2) min SDK 23 (Nearby)
+          vp = pathlib.Path("android/variables.gradle")
+          v = vp.read_text()
+          v = re.sub(r"minSdkVersion\s*=\s*\d+", "minSdkVersion = 23", v)
+          vp.write_text(v)
+
+          # 3) Nearby dependency
+          gp = pathlib.Path("android/app/build.gradle")
+          g = gp.read_text()
+          if "play-services-nearby" not in g:
+              g = re.sub(r"(\ndependencies \{\n)", r'\1    implementation "com.google.android.gms:play-services-nearby:19.1.0"\n', g, count=1)
+              assert "play-services-nearby" in g
+          gp.write_text(g)
+          print("patched")
+          PY
+          python3 patch_android.py
+          npx cap sync android
+
+      - name: Build APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GroupHangout-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish APK
+        id: publish
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk GroupHangout.apk
+          gh release create "apk-${{ github.run_number }}" GroupHangout.apk --target "${{ github.sha }}" --title "Group Hangout APK ${{ github.run_number }}" --notes "Install this APK on an Android phone."
+
+      - name: Notify users about the update
+        if: steps.publish.outcome == 'success'
+        continue-on-error: true
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          BUILD: ${{ github.run_number }}
+          APK: https://github.com/${{ github.repository }}/releases/latest/download/GroupHangout.apk
+        run: |
+          if [ -z "$SA" ]; then echo "No FIREBASE_SERVICE_ACCOUNT secret, skipping notification"; exit 0; fi
+          mkdir notify && cd notify
+          npm init -y > /dev/null
+          npm install firebase-admin@12
+          cat > notify.js <<'JS'
+          const admin = require("firebase-admin");
+          admin.initializeApp({ credential: admin.credential.cert(JSON.parse(process.env.SA)) });
+          const db = admin.firestore();
+          (async () => {
+            await db.doc("config/app").set(
+              { minBuild: Number(process.env.BUILD), apk: process.env.APK, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+              { merge: true }
+            );
+            const snap = await db.collection("users").get();
+            const tokens = [...new Set(snap.docs.map((d) => d.get("fcm")).filter(Boolean))];
+            console.log("devices:", tokens.length);
+            for (let i = 0; i < tokens.length; i += 500) {
+              const r = await admin.messaging().sendEachForMulticast({
+                tokens: tokens.slice(i, i + 500),
+                notification: { title: "Update required", body: "A new version of Group Hangout is ready. Open the app to update." },
+                data: { type: "update" },
+                android: { priority: "high", notification: { channelId: "updates", sound: "default" } },
+              });
+              console.log("sent:", r.successCount, "failed:", r.failureCount);
+            }
+          })().catch((e) => { console.error(e); process.exit(1); });
+          JS
+          node notify.js
