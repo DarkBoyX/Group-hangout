@@ -1,0 +1,40 @@
+name: Deploy Functions
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "index.js"
+      - "package.json"
+      - ".github/workflows/functions.yml"
+
+concurrency:
+  group: functions-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Prepare functions folder
+        run: |
+          mkdir -p functions
+          cp index.js functions/index.js
+          cp package.json functions/package.json
+          cd functions
+          npm install
+
+      - name: Deploy
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          test -n "$SA" || { echo "Add the FIREBASE_SERVICE_ACCOUNT secret first"; exit 1; }
+          echo "$SA" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          npx -y firebase-tools@latest deploy --only functions --project group-24984 --non-interactive --force
