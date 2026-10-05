@@ -186,6 +186,42 @@ img.av{object-fit:cover;display:block}
 .msgs,.body{overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .msgs.dm .who,.b.cont .who{display:none}
 .tx{white-space:pre-wrap}
+.who{cursor:pointer}
+.ttl.tap{cursor:pointer}
+.avbtn{background:none!important;border:0;padding:0;border-radius:50%;box-shadow:none;flex:none;margin-left:2px}
+.avbtn .av{width:38px;height:38px;font-size:16px}
+.av.big{width:96px;height:96px;font-size:40px}
+.item>.i{width:22px;height:22px;flex:none;display:inline-block}
+.item.bad{color:#ff7b7b}
+.acct{text-align:center;padding:10px 0 22px}
+.acct .av{margin:0 auto 12px}
+.acctname{font-size:22px;font-weight:800}
+.acctbio{margin-top:10px;font-size:14px;white-space:pre-wrap}
+.setav{display:flex;align-items:center;gap:16px;margin-bottom:14px}
+.lbl{font-size:13px;color:var(--muted);margin:12px 0 6px;font-weight:600}
+textarea.ta{width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:12px;background:rgba(0,0,0,.35);color:var(--text);font:inherit;resize:vertical;outline:none;margin-bottom:6px}
+textarea.ta:focus{border-color:#8a8a92}
+.cnt{text-align:right}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:4px 14px;margin-bottom:16px}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.kv:last-child{border-bottom:0}
+.kv .k{color:var(--muted)}
+.kv .v{font-weight:600;text-align:right;word-break:break-word}
+.devic{width:42px;height:42px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;flex:none}
+.devic .i{width:22px;height:22px}
+.mdl{position:fixed;inset:0;z-index:99500;background:rgba(0,0,0,.62);display:flex;align-items:center;justify-content:center;padding:20px;animation:rise .2s both}
+.mcard{width:100%;max-width:360px;background:#17171a;border:1px solid var(--line);border-radius:22px;padding:22px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+.pcard{text-align:center}
+.pcard .av{margin:0 auto 12px}
+.pcard .pname{font-size:22px;font-weight:800}
+.pcard .pbio{margin-top:14px;white-space:pre-wrap;font-size:15px}
+button.danger{background:#7a2323;color:#fff}
+.tick{width:26px;height:26px;border-radius:50%;border:2px solid #4a4a52;display:flex;align-items:center;justify-content:center;flex:none;color:#111;transition:background .15s,border-color .15s}
+.tick .i{width:16px;height:16px}
+.tick .i svg{stroke-width:3}
+.item.sel{border-color:#8a8a92}
+.item.sel .tick{background:#e4e4e7;border-color:#e4e4e7}
+.sharepv{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:14px;font-size:14px;max-height:96px;overflow:hidden;word-break:break-word;white-space:pre-wrap}
 .b{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .b.held{box-shadow:0 0 0 2px rgba(255,255,255,.38)}
 .b.gone{opacity:.7;font-style:italic;color:var(--muted)}
@@ -247,6 +283,7 @@ img.av{object-fit:cover;display:block}
 <script>
 const root=document.getElementById("root");
 let hidden=new Set();
+let profData={},acctBtn=null;
 let db=null,uid=null,me=null,view="chats",body=null,tabsEl=null,subs=[],chatUnsub=null;
 let friends=[],groups=[],profiles=[],incoming=[],outgoing=[],picked=new Set(),paint=()=>{},notesPaint=()=>{};
 
@@ -286,12 +323,22 @@ x:'<svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>',
 plus:'<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
 file:'<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
 img:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg>',
-flag:'<svg viewBox="0 0 24 24"><path d="M4 22V4M4 4h13l-2 4 2 4H4"/></svg>'
+flag:'<svg viewBox="0 0 24 24"><path d="M4 22V4M4 4h13l-2 4 2 4H4"/></svg>',
+settings:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+shield:'<svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+logout:'<svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>',
+chev:'<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
+pc:'<svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>',
+mobile:'<svg viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>',
+tablet:'<svg viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M11 18h2"/></svg>',
+check:'<svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>'
 };
 function ic(n){return h("span",{class:"i",html:SVG[n]})}
 function avatar(label,icon,group){
 if(icon&&icon.startsWith("data:"))return h("img",{class:"av",src:icon,alt:""});
 if(group)return h("div",{class:"av",style:"background:"+shade(label),html:SVG.users});
+const pd=profData[label];
+if(pd&&pd.avatar)return h("img",{class:"av",src:pd.avatar,alt:""});
 return h("div",{class:"av",text:label[0].toUpperCase(),style:"background:"+shade(label)});
 }
 function toIcon(file){
@@ -370,9 +417,9 @@ function logout(){
 stopNearby();leaveCall();calls={};hideRing();curChat=null;pendingOpen=null;nearRun=false;nearErr="";
 subs.forEach(u=>u());subs=[];
 if(chatUnsub){chatUnsub();chatUnsub=null}
-friends=[];groups=[];profiles=[];incoming=[];outgoing=[];picked=new Set();me=null;
+friends=[];groups=[];profiles=[];incoming=[];outgoing=[];picked=new Set();me=null;hidden=new Set();profData={};devAt=0;acctBtn=null;
 const u0=uid;
-const clr=u0?db.collection("users").doc(u0).update({fcm:firebase.firestore.FieldValue.delete()}).catch(()=>{}):Promise.resolve();
+const clr=u0?Promise.all([db.collection("users").doc(u0).update({fcm:firebase.firestore.FieldValue.delete()}).catch(()=>{}),db.collection("users").doc(u0).collection("devices").doc(devId()).delete().catch(()=>{})]):Promise.resolve();
 Promise.race([clr,new Promise(r=>setTimeout(r,2500))]).then(()=>auth.signOut());
 }
 
@@ -380,7 +427,7 @@ function home(){
 subs.forEach(u=>u());subs=[];
 subs.push(db.collection("friends").where("members","array-contains",me).onSnapshot(s=>{friends=s.docs.map(d=>d.data().members.find(x=>x!==me)).filter(Boolean);doPaint()}));
 subs.push(db.collection("groups").where("members","array-contains",me).onSnapshot(s=>{groups=s.docs.map(d=>({id:d.id,...d.data()}));doPaint();if(pendingOpen){const o=pendingOpen;pendingOpen=null;openById(o)}}));
-subs.push(db.collection("profiles").limit(500).onSnapshot(s=>{profiles=s.docs.map(d=>d.data().username);doPaint()}));
+subs.push(db.collection("profiles").limit(500).onSnapshot(s=>{profiles=s.docs.map(d=>d.data().username);s.docs.forEach(d=>{const x=d.data();profData[x.username]={avatar:x.avatar||"",bio:x.bio||"",name:x.name||""}});refreshAcctBtn();doPaint()}));
 subs.push(db.collection("requests").where("to","==",me).onSnapshot(s=>{incoming=s.docs.map(d=>d.data()).filter(r=>r.status==="pending");updateBell();doPaint();notesPaint()}));
 subs.push(db.collection("requests").where("from","==",me).onSnapshot(s=>{outgoing=s.docs.map(d=>d.data());doPaint()}));
 subs.push(db.collection("calls").where("invited","array-contains",me).onSnapshot(s=>{calls={};s.docs.forEach(d=>{calls[d.id]={id:d.id,...d.data()}});onCalls()}));
@@ -396,6 +443,7 @@ toast(p.from+" pinged you in "+p.title,p.text||"",()=>openById(p.chat));
 draw("chats");
 startNearby();
 initPush();
+if(shareText)openShare();
 }
 
 
@@ -447,6 +495,212 @@ root.classList.add("open");
 return m;
 }
 
+/* ---------- profiles, account page, devices ---------- */
+function refreshAcctBtn(){if(acctBtn){acctBtn.textContent="";acctBtn.append(avatar(me))}}
+function dispName(n){const p=profData[n];return(p&&p.name)||n}
+function modal(content){
+const ov=h("div",{class:"mdl"});
+const close=()=>ov.remove();
+ov.addEventListener("pointerdown",e=>{if(e.target===ov)close()});
+ov.append(h("div",{class:"mcard"},content));
+document.body.append(ov);
+return close;
+}
+function showProfile(n){
+if(!n)return;
+if(n===me){openAccount();return}
+const card=h("div",{class:"pcard"});
+let close;
+const fill=()=>{
+const p=profData[n]||{};
+const a=avatar(n);a.classList.add("big");
+card.textContent="";
+card.append(a,h("div",{class:"pname",text:dispName(n)}),h("div",{class:"muted",text:"@"+n}),
+h("div",{class:"pbio"+(p.bio?"":" muted"),text:p.bio||"No description yet."}),
+h("div",{class:"acts center",style:"margin-top:18px"},h("button",{class:"ghost",text:"Close",onclick:()=>close()})));
+};
+fill();
+close=modal(card);
+if(!profData[n]&&db)db.collection("profiles").doc(n).get().then(d=>{if(d.exists){const x=d.data();profData[n]={avatar:x.avatar||"",bio:x.bio||"",name:x.name||""};fill()}}).catch(()=>{});
+}
+function subTop(title){
+return h("div",{class:"top"},h("button",{class:"ghost sm",text:"Back",onclick:openAccount}),h("b",{class:"ttl",text:title}),h("span"));
+}
+function menuItem(icon,label,fn,bad){
+const el=h("div",{class:"item"+(bad?" bad":""),onclick:fn,tabindex:"0",role:"button"},ic(icon),h("div",{class:"grow",text:label}),ic("chev"));
+el.onkeydown=e=>{if(e.key==="Enter")fn()};
+return el;
+}
+function openAccount(){
+const m=pane();
+const p=profData[me]||{};
+const a=avatar(me);a.classList.add("big");
+m.append(
+h("div",{class:"top"},h("button",{class:"ghost back",text:"Back",onclick:closePane}),h("b",{class:"ttl",text:"Account"}),h("span")),
+h("div",{class:"body"},
+h("div",{class:"acct"},a,h("div",{class:"acctname",text:dispName(me)}),h("div",{class:"muted",text:"@"+me}),p.bio?h("div",{class:"acctbio",text:p.bio}):null),
+menuItem("settings","Settings",openSettings),
+menuItem("shield","Security",openSecurity),
+menuItem("logout","Log out",confirmLogout,true)));
+}
+function openSettings(){
+const m=pane();
+const cur=profData[me]||{};
+let pic;
+const prev=h("div");
+const paintPrev=()=>{
+prev.textContent="";
+const src=pic===undefined?cur.avatar:pic;
+const a=src?h("img",{class:"av",src,alt:""}):h("div",{class:"av",text:me[0].toUpperCase(),style:"background:"+shade(me)});
+a.classList.add("big");
+prev.append(a);
+};
+paintPrev();
+const file=h("input",{type:"file",accept:"image/*",style:"display:none"});
+file.onchange=async()=>{const f=file.files[0];file.value="";if(!f)return;try{pic=await toIcon(f);paintPrev()}catch(e){alert("Could not use that image.")}};
+const nameIn=h("input",{maxlength:"30",placeholder:"Name",autocomplete:"off"});
+nameIn.value=cur.name||"";
+const bioIn=h("textarea",{maxlength:"200",placeholder:"Add a description",rows:"4",class:"ta"});
+bioIn.value=cur.bio||"";
+const cnt=h("div",{class:"muted cnt"});
+const upd=()=>{cnt.textContent=bioIn.value.length+" / 200"};
+bioIn.oninput=upd;upd();
+const msg=h("div",{class:"muted",style:"min-height:20px;margin:8px 0"});
+const save=h("button",{class:"full",text:"Save"});
+save.onclick=async()=>{
+save.disabled=true;msg.textContent="Saving...";
+const D=firebase.firestore.FieldValue.delete();
+const nm=nameIn.value.trim().slice(0,30),bio=bioIn.value.trim().slice(0,200);
+const u={name:nm||D,bio:bio||D};
+if(pic!==undefined)u.avatar=pic||D;
+try{
+await db.collection("profiles").doc(me).update(u);
+const np={avatar:pic===undefined?(cur.avatar||""):pic,bio:bio,name:nm};
+profData[me]=np;Object.assign(cur,np);pic=undefined;
+paintPrev();refreshAcctBtn();doPaint();
+msg.textContent="Saved";
+}catch(e){msg.textContent="Could not save. Check your connection and try again."}
+save.disabled=false;
+};
+m.append(subTop("Settings"),h("div",{class:"body"},
+h("div",{class:"setav"},prev,h("div",{class:"acts"},h("button",{class:"ghost sm",text:"Change picture",onclick:()=>file.click()}),h("button",{class:"ghost sm",text:"Remove",onclick:()=>{pic="";paintPrev()}})),file),
+h("div",{class:"lbl",text:"Name"}),nameIn,
+h("div",{class:"lbl",text:"Description"}),bioIn,cnt,msg,save));
+}
+function openSecurity(){
+const m=pane();
+let created="Unknown";
+try{const u=auth&&auth.currentUser,c=u&&u.metadata&&u.metadata.creationTime;if(c)created=new Date(c).toLocaleDateString([],{year:"numeric",month:"long",day:"numeric"})}catch(e){}
+const kv=(k,v)=>h("div",{class:"kv"},h("span",{class:"k",text:k}),h("span",{class:"v",text:v}));
+const list=h("div",null,h("div",{class:"muted",text:"Loading devices..."}));
+m.append(subTop("Security"),h("div",{class:"body"},
+h("div",{class:"card"},kv("Account created",created),kv("Name",dispName(me)),kv("Username","@"+me)),
+h("div",{class:"lbl",text:"Devices logged in"}),list,
+h("div",{class:"muted",style:"margin-top:8px",text:"A device shows up here once it opens the app, and is removed when you log out on it."})));
+loadDevices(list);
+}
+function loadDevices(box){
+if(!db||!uid)return;
+db.collection("users").doc(uid).collection("devices").get().then(s=>{
+const ms=x=>x&&x.toMillis?x.toMillis():0;
+const arr=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>ms(b.last)-ms(a.last));
+box.textContent="";
+if(!arr.length){box.append(h("div",{class:"muted",text:"No devices yet."}));return}
+arr.forEach(d=>{
+const t=ms(d.last),here=d.id===devId();
+const when=here||!t||Date.now()-t<300000?"Active now":new Date(t).toLocaleString([],{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
+const icon=d.type==="pc"?"pc":d.type==="tablet"?"tablet":"mobile";
+box.append(h("div",{class:"item static"},h("div",{class:"devic"},ic(icon)),h("div",{class:"grow"},h("div",{text:d.label||"Unknown device"}),h("div",{class:"muted",text:when})),here?h("span",{class:"pill",style:"margin:0",text:"This device"}):null));
+});
+}).catch(()=>{box.textContent="";box.append(h("div",{class:"muted",text:"Could not load devices."}))});
+}
+function confirmLogout(){
+let close;
+close=modal(h("div",null,
+h("div",{class:"phtitle",style:"font-size:20px",text:"Log out?"}),
+h("div",{class:"muted",text:"If you log out, you will be signed out of this account on this device. You will need your username and password to sign back in."}),
+h("div",{class:"acts",style:"justify-content:flex-end;margin-top:18px"},
+h("button",{class:"ghost",text:"Cancel",onclick:()=>close()}),
+h("button",{class:"danger",text:"Log out",onclick:()=>{close();logout()}}))));
+}
+function devId(){
+let i="";
+try{i=localStorage.getItem("gh_dev")||""}catch(e){}
+if(!i){i=Math.random().toString(36).slice(2,10)+Date.now().toString(36);try{localStorage.setItem("gh_dev",i)}catch(e){}}
+return i;
+}
+function devInfo(){
+const ua=navigator.userAgent||"",touch=(navigator.maxTouchPoints||0)>1;
+let type="pc";
+if(/iPad|Tablet|PlayBook|Silk/i.test(ua)||(/Android/i.test(ua)&&!/Mobile/i.test(ua))||(/Macintosh/i.test(ua)&&touch))type="tablet";
+else if(/Mobi|iPhone|iPod|Android/i.test(ua))type="phone";
+const os=/Android/i.test(ua)?"Android":(/iPhone|iPad|iPod/i.test(ua)||(/Macintosh/i.test(ua)&&touch))?"iOS":/Windows/i.test(ua)?"Windows":/Mac OS X|Macintosh/i.test(ua)?"macOS":/CrOS/i.test(ua)?"ChromeOS":/Linux/i.test(ua)?"Linux":"Unknown OS";
+const br=/Edg\//i.test(ua)?"Edge":/OPR\//i.test(ua)?"Opera":/SamsungBrowser/i.test(ua)?"Samsung Internet":/Firefox|FxiOS/i.test(ua)?"Firefox":/Chrome|CriOS/i.test(ua)?"Chrome":/Safari/i.test(ua)?"Safari":"Browser";
+return{type,label:(NATIVE?"Group Hangout app":br)+" on "+os};
+}
+let devAt=0;
+function regDevice(){
+if(!db||!uid||Date.now()-devAt<300000)return;
+devAt=Date.now();
+const i=devInfo();
+db.collection("users").doc(uid).collection("devices").doc(devId()).set({type:i.type,label:i.label,app:NATIVE,last:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}).catch(()=>{});
+}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")regDevice()});
+
+/* ---------- share into the app (Android share sheet) ---------- */
+let shareText="",shareHooked=false;
+function takeShare(txt){
+if(!txt)return;
+shareText=String(txt).slice(0,2000);
+if(db&&uid&&me)openShare();
+}
+async function pollShare(){
+if(!ShareP)return;
+try{const r=await ShareP.getShared();if(r&&r.text)takeShare(r.text)}catch(e){}
+}
+function initShare(){
+if(!ShareP||shareHooked)return;
+shareHooked=true;
+try{ShareP.addListener("shared",()=>pollShare())}catch(e){}
+pollShare();
+}
+function openShare(){
+const text=shareText;
+if(!text)return;
+const m=pane();
+const sel=new Set();
+const send=h("button",{class:"full",text:"Send",disabled:"true"});
+const upd=()=>{const n=sel.size;send.disabled=!n;send.textContent=n?"Send to "+n:"Send"};
+const target=(label,id,icon,isGroup)=>{
+const tick=h("div",{class:"tick"});
+const el=h("div",{class:"item",role:"button",tabindex:"0"},isGroup?avatar(label,icon||"",true):avatar(label),h("div",{class:"grow",text:label}),tick);
+const flip=()=>{
+if(sel.has(id)){sel.delete(id);el.classList.remove("sel");tick.textContent=""}
+else{sel.add(id);el.classList.add("sel");tick.append(ic("check"))}
+upd();
+};
+el.onclick=flip;
+el.onkeydown=e=>{if(e.key==="Enter")flip()};
+return el;
+};
+const list=h("div");
+if(groups.length){list.append(h("div",{class:"lbl",text:"Groups"}));groups.forEach(g=>list.append(target(g.name,g.id,g.icon,true)))}
+if(friends.length){list.append(h("div",{class:"lbl",text:"Friends"}));friends.forEach(f=>list.append(target(f,"dm_"+pair(me,f),"",false)))}
+if(!groups.length&&!friends.length)list.append(h("div",{class:"empty",text:"Add a friend first, then you can share with them."}));
+send.onclick=()=>{
+if(!sel.size)return;
+const ids=[...sel];
+ids.forEach(id=>db.collection("msgs/"+id+"/items").add({from:me,text,t:Date.now()}).catch(()=>{}));
+shareText="";
+sfx("send");
+if(ids.length===1)openById(ids[0]);else closePane();
+};
+m.append(
+h("div",{class:"top"},h("button",{class:"ghost sm",text:"Cancel",onclick:()=>{shareText="";closePane()}}),h("b",{class:"ttl",text:"Share to"}),h("span")),
+h("div",{class:"body"},h("div",{class:"sharepv",text}),list),
+h("div",{style:"padding:12px 16px;border-top:1px solid var(--line)"},send));
+}
+
 function openNotes(){
 const m=pane();
 const nb=h("div",{class:"body"});
@@ -474,7 +728,8 @@ body=h("div",{class:"body"});
 const names={chats:["chat","Chats"],find:["search","Find"],groups:["users","Groups"]};
 if(NATIVE)names.near=["near","Nearby"];
 tabsEl=h("div",{class:"nav"},Object.keys(names).map(k=>h("button",{class:k===tab?"on":"",onclick:()=>draw(k)},ic(names[k][0]),h("span",{text:names[k][1]}))));
-side.append(h("div",{class:"top"},h("b",{text:"@"+me}),pill(),bell(),h("button",{class:"ghost",text:"Log out",onclick:logout})),body,tabsEl);
+acctBtn=h("button",{class:"avbtn","aria-label":"Account",onclick:openAccount},avatar(me));
+side.append(h("div",{class:"top"},h("b",{text:"@"+me}),pill(),bell(),acctBtn),body,tabsEl);
 ({chats:tabChats,find:tabFind,groups:tabGroups,near:tabNear})[tab]();
 }
 
@@ -778,7 +1033,7 @@ const gone=!!m.del;
 const media=m.voice?voiceEl(m):m.img?imgEl(m):m.file?fileEl(m):null;
 const body=gone?h("div",{class:"tx",text:"This message was deleted"}):media||textEl(m.text||"",m.mentions);
 const cap=!gone&&media&&m.text?textEl(m.text,m.mentions):null;
-const el=h("div",{class:"b"+(gone?" gone":"")},mine?null:h("div",{class:"who",text:m.from}),body,cap,(!gone&&m.text)?linkPreview(m.text):null,tm);
+const el=h("div",{class:"b"+(gone?" gone":"")},mine?null:h("div",{class:"who",text:m.from,onclick:()=>showProfile(m.from)}),body,cap,(!gone&&m.text)?linkPreview(m.text):null,tm);
 if(onPress&&id){
 let t=0,x0=0,y0=0;
 const stop=()=>{clearTimeout(t);t=0};
@@ -964,7 +1219,7 @@ showRec();
 }
 
 host.append(
-h("div",{class:"top"},h("button",{class:"ghost back",text:"Back",onclick:closePane}),h("b",{class:"ttl"},isGroup?avatar(title,icon||"",true):avatar(title),h("span",{text:title})),h("div",{class:"acts"},isGroup?h("button",{class:"ghost sm callbtn","aria-label":"Report",onclick:()=>toast("Reports","Coming soon",null,true)},ic("flag"),"Report"):h("button",{class:"ghost sm callbtn","aria-label":"Voice call",onclick:()=>startCall(id,title,false)},ic("phone")))),
+h("div",{class:"top"},h("button",{class:"ghost back",text:"Back",onclick:closePane}),h("b",{class:"ttl"+(isGroup?"":" tap"),onclick:isGroup?null:()=>showProfile(title)},isGroup?avatar(title,icon||"",true):avatar(title),h("span",{text:title})),h("div",{class:"acts"},isGroup?h("button",{class:"ghost sm callbtn","aria-label":"Report",onclick:()=>toast("Reports","Coming soon",null,true)},ic("flag"),"Report"):h("button",{class:"ghost sm callbtn","aria-label":"Voice call",onclick:()=>startCall(id,title,false)},ic("phone")))),
 ban,
 list,
 h("div",{class:"sendwrap"},pop,amenu,edBar,bar,recBar,pickImg,pickFile));
@@ -1026,6 +1281,7 @@ if(rec){rec.send=false;try{if(rec.mr.state!=="inactive")rec.mr.stop()}catch(e){}
 
 /* ---------- offline nearby text (native Android app only) ---------- */
 const NATIVE=!!(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform());
+const ShareP=NATIVE?(window.Capacitor.registerPlugin?window.Capacitor.registerPlugin("ShareIn"):(window.Capacitor.Plugins&&window.Capacitor.Plugins.ShareIn)||null):null;
 const NearbyP=NATIVE?(window.Capacitor.registerPlugin?window.Capacitor.registerPlugin("Nearby"):(window.Capacitor.Plugins&&window.Capacitor.Plugins.Nearby)||null):null;
 let near=[],nearHook=()=>{},nearOn=false,nearTry=0,nearTimer=null,nearErr="",nearRun=false;
 const nearKey=n=>"gh_near_"+me+"_"+n;
@@ -1436,12 +1692,14 @@ db=firebase.firestore();
 try{db.settings({experimentalAutoDetectLongPolling:true,merge:true})}catch(e){}
 db.enablePersistence({synchronizeTabs:!NATIVE}).catch(()=>{});
 watchConfig();
+initShare();
 checkRelease();setInterval(checkRelease,600000);
 auth.onAuthStateChanged(user=>{
 if(!user){showAuth("login");return}
 uid=user.uid;
 me=user.email.split("@")[0];
 db.collection("users").doc(uid).get().then(d=>{((d.data()&&d.data().hid)||[]).forEach(x=>hidden.add(x))}).catch(()=>{});
+regDevice();
 home();
 });
 }
