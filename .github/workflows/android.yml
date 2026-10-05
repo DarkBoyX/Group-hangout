@@ -516,6 +516,294 @@ jobs:
               }
           }
           JAVA6
+          cat > "$D/ScreenCapPlugin.java" <<'JAVA7'
+          package com.grouphangout.app;
+
+          import android.app.Activity;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.media.projection.MediaProjectionManager;
+          import androidx.activity.result.ActivityResult;
+          import androidx.core.content.ContextCompat;
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.ActivityCallback;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+
+          @CapacitorPlugin(name = "ScreenCap")
+          public class ScreenCapPlugin extends Plugin {
+              private static ScreenCapPlugin inst;
+              private static PluginCall starting;
+
+              @Override
+              public void load() {
+                  inst = this;
+              }
+
+              @PluginMethod
+              public void start(PluginCall call) {
+                  if (ScreenService.running) {
+                      call.resolve();
+                      return;
+                  }
+                  MediaProjectionManager m = (MediaProjectionManager) getContext().getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+                  startActivityForResult(call, m.createScreenCaptureIntent(), "granted");
+              }
+
+              @ActivityCallback
+              private void granted(PluginCall call, ActivityResult r) {
+                  if (call == null) return;
+                  if (r.getResultCode() != Activity.RESULT_OK || r.getData() == null) {
+                      call.reject("denied");
+                      return;
+                  }
+                  starting = call;
+                  ScreenService.code = r.getResultCode();
+                  ScreenService.data = r.getData();
+                  try {
+                      ContextCompat.startForegroundService(getContext(), new Intent(getContext(), ScreenService.class));
+                  } catch (Exception e) {
+                      starting = null;
+                      call.reject("service");
+                  }
+              }
+
+              @PluginMethod
+              public void stop(PluginCall call) {
+                  getContext().stopService(new Intent(getContext(), ScreenService.class));
+                  call.resolve();
+              }
+
+              static void started(boolean ok, String msg) {
+                  PluginCall c = starting;
+                  starting = null;
+                  if (c == null) return;
+                  if (ok) c.resolve();
+                  else c.reject(msg == null ? "failed" : msg);
+              }
+
+              static void frame(String b64, int w, int h) {
+                  ScreenCapPlugin p = inst;
+                  if (p == null) return;
+                  JSObject o = new JSObject();
+                  o.put("d", b64);
+                  o.put("w", w);
+                  o.put("h", h);
+                  p.notifyListeners("frame", o);
+              }
+
+              static void ended() {
+                  ScreenCapPlugin p = inst;
+                  if (p != null) p.notifyListeners("stopped", new JSObject());
+              }
+          }
+          JAVA7
+          cat > "$D/ScreenService.java" <<'JAVA8'
+          package com.grouphangout.app;
+
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.app.Service;
+          import android.content.ComponentCallbacks;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.pm.ServiceInfo;
+          import android.content.res.Configuration;
+          import android.graphics.Bitmap;
+          import android.graphics.PixelFormat;
+          import android.hardware.display.DisplayManager;
+          import android.hardware.display.VirtualDisplay;
+          import android.media.Image;
+          import android.media.ImageReader;
+          import android.media.projection.MediaProjection;
+          import android.media.projection.MediaProjectionManager;
+          import android.os.Build;
+          import android.os.Handler;
+          import android.os.HandlerThread;
+          import android.os.IBinder;
+          import android.os.SystemClock;
+          import android.util.Base64;
+          import android.util.DisplayMetrics;
+          import android.view.WindowManager;
+          import androidx.core.app.NotificationCompat;
+          import java.io.ByteArrayOutputStream;
+
+          public class ScreenService extends Service {
+              static final String CH = "screen_share";
+              static int code;
+              static Intent data;
+              static volatile boolean running = false;
+
+              private MediaProjection proj;
+              private VirtualDisplay vd;
+              private ImageReader reader;
+              private HandlerThread ht;
+              private Handler hd;
+              private int w, h, dpi;
+              private long lastAt = 0;
+              private boolean dead = false;
+              private boolean sched = false;
+              private final ByteArrayOutputStream bos = new ByteArrayOutputStream(1 << 17);
+
+              private final ComponentCallbacks cb = new ComponentCallbacks() {
+                  @Override
+                  public void onConfigurationChanged(Configuration c) {
+                      if (hd != null) hd.post(ScreenService.this::resize);
+                  }
+
+                  @Override
+                  public void onLowMemory() {}
+              };
+
+              @Override
+              public IBinder onBind(Intent i) {
+                  return null;
+              }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                  if (Build.VERSION.SDK_INT >= 26) {
+                      nm.createNotificationChannel(new NotificationChannel(CH, "Screen sharing", NotificationManager.IMPORTANCE_LOW));
+                  }
+                  Intent open = new Intent(this, MainActivity.class);
+                  open.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                  PendingIntent pi = PendingIntent.getActivity(this, 1, open, PendingIntent.FLAG_IMMUTABLE);
+                  Notification n = new NotificationCompat.Builder(this, CH)
+                      .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+                      .setContentTitle("Sharing your screen")
+                      .setContentText("Tap to return to the call")
+                      .setOngoing(true)
+                      .setContentIntent(pi)
+                      .build();
+                  if (Build.VERSION.SDK_INT >= 29) {
+                      startForeground(4343, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+                  } else {
+                      startForeground(4343, n);
+                  }
+                  if (proj != null) return START_NOT_STICKY;
+                  try {
+                      begin();
+                      running = true;
+                      ScreenCapPlugin.started(true, null);
+                  } catch (Exception e) {
+                      ScreenCapPlugin.started(false, "capture failed");
+                      stopSelf();
+                  }
+                  return START_NOT_STICKY;
+              }
+
+              private void measure() {
+                  DisplayMetrics dm = new DisplayMetrics();
+                  ((WindowManager) getSystemService(Context.WINDOW_SERVICE)).getDefaultDisplay().getRealMetrics(dm);
+                  float s = Math.min(1f, 1000f / Math.max(dm.widthPixels, dm.heightPixels));
+                  w = Math.max(2, Math.round(dm.widthPixels * s) / 2 * 2);
+                  h = Math.max(2, Math.round(dm.heightPixels * s) / 2 * 2);
+                  dpi = dm.densityDpi;
+              }
+
+              private void begin() {
+                  ht = new HandlerThread("screencap");
+                  ht.start();
+                  hd = new Handler(ht.getLooper());
+                  MediaProjectionManager m = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+                  proj = m.getMediaProjection(code, data);
+                  data = null;
+                  proj.registerCallback(new MediaProjection.Callback() {
+                      @Override
+                      public void onStop() {
+                          if (!dead) {
+                              ScreenCapPlugin.ended();
+                              stopSelf();
+                          }
+                      }
+                  }, hd);
+                  measure();
+                  reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2);
+                  reader.setOnImageAvailableListener(r -> handle(), hd);
+                  vd = proj.createVirtualDisplay("share", w, h, dpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader.getSurface(), null, hd);
+                  getApplicationContext().registerComponentCallbacks(cb);
+              }
+
+              private void resize() {
+                  if (dead || vd == null) return;
+                  try {
+                      measure();
+                      ImageReader nr = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2);
+                      nr.setOnImageAvailableListener(r -> handle(), hd);
+                      vd.resize(w, h, dpi);
+                      vd.setSurface(nr.getSurface());
+                      ImageReader old = reader;
+                      reader = nr;
+                      if (old != null) old.close();
+                  } catch (Exception ignored) {
+                  }
+              }
+
+              private void handle() {
+                  if (dead || reader == null) return;
+                  long n = SystemClock.uptimeMillis();
+                  long gap = n - lastAt;
+                  if (gap < 90) {
+                      if (!sched) {
+                          sched = true;
+                          hd.postDelayed(() -> {
+                              sched = false;
+                              handle();
+                          }, 95 - gap);
+                      }
+                      return;
+                  }
+                  Image im = null;
+                  try {
+                      im = reader.acquireLatestImage();
+                      if (im == null) return;
+                      lastAt = n;
+                      Image.Plane p = im.getPlanes()[0];
+                      int rw = p.getRowStride() / p.getPixelStride();
+                      Bitmap full = Bitmap.createBitmap(rw, im.getHeight(), Bitmap.Config.ARGB_8888);
+                      full.copyPixelsFromBuffer(p.getBuffer());
+                      Bitmap out = rw == im.getWidth() ? full : Bitmap.createBitmap(full, 0, 0, im.getWidth(), im.getHeight());
+                      bos.reset();
+                      out.compress(Bitmap.CompressFormat.JPEG, 60, bos);
+                      ScreenCapPlugin.frame(Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP), im.getWidth(), im.getHeight());
+                      if (out != full) out.recycle();
+                      full.recycle();
+                  } catch (Exception ignored) {
+                  } finally {
+                      if (im != null) im.close();
+                  }
+              }
+
+              @Override
+              public void onDestroy() {
+                  dead = true;
+                  running = false;
+                  try {
+                      getApplicationContext().unregisterComponentCallbacks(cb);
+                  } catch (Exception ignored) {
+                  }
+                  try {
+                      if (vd != null) vd.release();
+                  } catch (Exception ignored) {
+                  }
+                  try {
+                      if (reader != null) reader.close();
+                  } catch (Exception ignored) {
+                  }
+                  try {
+                      if (proj != null) proj.stop();
+                  } catch (Exception ignored) {
+                  }
+                  if (ht != null) ht.quitSafely();
+                  super.onDestroy();
+              }
+          }
+          JAVA8
           cat > "$D/MainActivity.java" <<'JAVA2'
           package com.grouphangout.app;
 
@@ -535,6 +823,7 @@ jobs:
                   registerPlugin(CallKeepPlugin.class);
                   registerPlugin(FilesPlugin.class);
                   registerPlugin(ShareInPlugin.class);
+                  registerPlugin(ScreenCapPlugin.class);
                   super.onCreate(savedInstanceState);
                   ShareInPlugin.take(getIntent());
                   List<String> need = new ArrayList<>();
@@ -575,18 +864,23 @@ jobs:
               <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
               <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
               <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <uses-permission android:name="android.permission.CAMERA" />
+              <uses-feature android:name="android.hardware.camera" android:required="false" />
               <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
               <uses-permission android:name="android.permission.VIBRATE" />
               <uses-permission android:name="android.permission.WAKE_LOCK" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
           """
           assert "<application" in m
           if "BLUETOOTH_SCAN" not in m:
               m = m.replace("<application", perms + "\n    <application", 1)
           if "CallService" not in m:
               m = m.replace("</application>", '    <service android:name=".CallService" android:foregroundServiceType="microphone" android:exported="false" />\n    </application>', 1)
+          if "ScreenService" not in m:
+              m = m.replace("</application>", '    <service android:name=".ScreenService" android:foregroundServiceType="mediaProjection" android:exported="false" />\n    </application>', 1)
           # share target: show up in the Android share sheet for text and links
           if "android.intent.action.SEND" not in m:
               flt = """        <intent-filter>
