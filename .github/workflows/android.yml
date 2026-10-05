@@ -12,6 +12,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -465,9 +469,57 @@ jobs:
               }
           }
           JAVA5
+          cat > "$D/ShareInPlugin.java" <<'JAVA6'
+          package com.grouphangout.app;
+
+          import android.content.Intent;
+          import com.getcapacitor.Bridge;
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginHandle;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+
+          @CapacitorPlugin(name = "ShareIn")
+          public class ShareInPlugin extends Plugin {
+              private static String pending = null;
+
+              public static void take(Intent i) {
+                  if (i == null || !Intent.ACTION_SEND.equals(i.getAction())) return;
+                  String t = i.getStringExtra(Intent.EXTRA_TEXT);
+                  String s = i.getStringExtra(Intent.EXTRA_SUBJECT);
+                  if (t == null || t.trim().isEmpty()) t = s;
+                  if (t == null || t.trim().isEmpty()) return;
+                  if (s != null && !s.trim().isEmpty() && !t.contains(s)) t = s + "\n" + t;
+                  pending = t.trim();
+                  i.removeExtra(Intent.EXTRA_TEXT);
+                  i.removeExtra(Intent.EXTRA_SUBJECT);
+              }
+
+              public static void fire(Bridge b) {
+                  if (b == null) return;
+                  PluginHandle ph = b.getPlugin("ShareIn");
+                  if (ph != null && ph.getInstance() instanceof ShareInPlugin) {
+                      ((ShareInPlugin) ph.getInstance()).notifyListeners("shared", new JSObject());
+                  }
+              }
+
+              @PluginMethod
+              public void getShared(PluginCall call) {
+                  JSObject o = new JSObject();
+                  if (pending != null) {
+                      o.put("text", pending);
+                      pending = null;
+                  }
+                  call.resolve(o);
+              }
+          }
+          JAVA6
           cat > "$D/MainActivity.java" <<'JAVA2'
           package com.grouphangout.app;
 
+          import android.content.Intent;
           import android.content.pm.PackageManager;
           import android.os.Bundle;
           import androidx.core.app.ActivityCompat;
@@ -482,7 +534,9 @@ jobs:
                   registerPlugin(NearbyPlugin.class);
                   registerPlugin(CallKeepPlugin.class);
                   registerPlugin(FilesPlugin.class);
+                  registerPlugin(ShareInPlugin.class);
                   super.onCreate(savedInstanceState);
+                  ShareInPlugin.take(getIntent());
                   List<String> need = new ArrayList<>();
                   for (String p : NearbyPlugin.needed()) {
                       if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) need.add(p);
@@ -493,6 +547,14 @@ jobs:
                   if (!need.isEmpty()) {
                       ActivityCompat.requestPermissions(this, need.toArray(new String[0]), 7);
                   }
+              }
+
+              @Override
+              protected void onNewIntent(Intent intent) {
+                  super.onNewIntent(intent);
+                  setIntent(intent);
+                  ShareInPlugin.take(intent);
+                  ShareInPlugin.fire(getBridge());
               }
           }
           JAVA2
@@ -525,6 +587,15 @@ jobs:
               m = m.replace("<application", perms + "\n    <application", 1)
           if "CallService" not in m:
               m = m.replace("</application>", '    <service android:name=".CallService" android:foregroundServiceType="microphone" android:exported="false" />\n    </application>', 1)
+          # share target: show up in the Android share sheet for text and links
+          if "android.intent.action.SEND" not in m:
+              flt = """        <intent-filter>
+                      <action android:name="android.intent.action.SEND" />
+                      <category android:name="android.intent.category.DEFAULT" />
+                      <data android:mimeType="text/plain" />
+                  </intent-filter>
+              """
+              m = m.replace("</activity>", flt + "</activity>", 1)
           mp.write_text(m)
 
           # 2) min SDK 23 (Nearby)
