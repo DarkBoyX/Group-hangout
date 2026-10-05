@@ -31,12 +31,12 @@ async function send(username, notification, data, channelId, ttl) {
   }
 }
 
-// Someone @mentioned you in a group
+// Someone @mentioned you in a group or private chat
 exports.onPing = onDocumentCreated({ document: "pings/{id}", region: REGION }, async (event) => {
   const p = event.data.data();
   await send(
     p.to,
-    { title: `${p.from} pinged you in ${p.title}`, body: p.text || "" },
+    { title: p.chat.startsWith("dm_") ? `${p.from} pinged you` : `${p.from} pinged you in ${p.title}`, body: p.text || "" },
     { type: "ping", chat: p.chat, title: p.title },
     "pings",
     3600 * 1000
