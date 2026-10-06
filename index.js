@@ -17,31 +17,40 @@ async function send(username, notification, data, channelId, ttl, tag) {
   const snap = await db.collection("users").where("username", "==", username).limit(1).get();
   if (snap.empty) return;
   const ref = snap.docs[0].ref;
-  const token = snap.docs[0].get("fcm");
-  if (!token) {
+  const tokens = ["fcm", "webfcm"].map((f) => [f, snap.docs[0].get(f)]).filter((t) => t[1]);
+  if (!tokens.length) {
     console.log("no push token for", username);
     return;
   }
-  try {
-    await admin.messaging().send({
-      token,
-      notification,
-      data,
-      android: {
-        priority: "high",
-        ttl,
-        notification: Object.assign(
-          { channelId, sound: "default", defaultVibrateTimings: true, visibility: "public", notificationPriority: "PRIORITY_MAX" },
-          tag ? { tag } : {}
-        ),
-      },
-    });
-  } catch (e) {
-    console.error("push failed for", username, e.code || e.message);
-    if (DEAD_TOKEN.includes(e.code)) {
-      await ref.update({ fcm: admin.firestore.FieldValue.delete() }).catch(() => {});
-    }
-  }
+  const strData = Object.fromEntries(Object.entries(data || {}).map(([k, v]) => [k, String(v == null ? "" : v)]));
+  await Promise.all(
+    tokens.map(async ([field, token]) => {
+      try {
+        await admin.messaging().send({
+          token,
+          notification,
+          data: strData,
+          android: {
+            priority: "high",
+            ttl,
+            notification: Object.assign(
+              { channelId, sound: "default", defaultVibrateTimings: true, visibility: "public", notificationPriority: "PRIORITY_MAX" },
+              tag ? { tag } : {}
+            ),
+          },
+          webpush: {
+            headers: { Urgency: "high", TTL: String(Math.floor(ttl / 1000)) },
+            notification: Object.assign({ icon: "icon-192.png" }, tag ? { tag, renotify: true } : {}),
+          },
+        });
+      } catch (e) {
+        console.error("push failed for", username, field, e.code || e.message);
+        if (DEAD_TOKEN.includes(e.code)) {
+          await ref.update({ [field]: admin.firestore.FieldValue.delete() }).catch(() => {});
+        }
+      }
+    })
+  );
 }
 
 // Someone @mentioned you in a group or private chat
