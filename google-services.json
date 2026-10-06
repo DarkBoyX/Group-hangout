@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "674832131315",
+    "project_id": "group-24984",
+    "storage_bucket": "group-24984.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:674832131315:android:97eac6426510bacc90c386",
+        "android_client_info": {
+          "package_name": "com.grouphangout.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCBPLyp99i24SOleZTxO8NbJ94xugmGVeE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
