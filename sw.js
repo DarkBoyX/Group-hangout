@@ -4,9 +4,14 @@ self.addEventListener("notificationclick",e=>{
 e.notification.close();
 e.waitUntil(clients.matchAll({type:"window",includeUncontrolled:true}).then(l=>{for(const c of l){if("focus" in c)return c.focus()}return clients.openWindow("./")}));
 });
-const C="group-hangout-v13";
+const C="group-hangout-v14";
+const FB=["https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js","https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js","https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"];
 self.addEventListener("install",e=>{
-e.waitUntil(caches.open(C).then(c=>c.addAll(["./","index.html","manifest.json","icon.svg","icon-192.png","icon-512.png"])));
+e.waitUntil(caches.open(C).then(async c=>{
+await c.addAll(["./","index.html"]);
+await Promise.all(["offline.html","manifest.json","icon.svg","icon-192.png","icon-512.png"].map(u=>c.add(u).catch(()=>{})));
+await Promise.all(FB.map(u=>fetch(u,{mode:"no-cors"}).then(r=>c.put(u,r)).catch(()=>{})));
+}));
 self.skipWaiting();
 });
 self.addEventListener("activate",e=>{
@@ -19,7 +24,7 @@ const u=new URL(r.url);
 if(u.origin!==location.origin&&u.hostname!=="www.gstatic.com")return;
 if(r.mode==="navigate"){
 e.respondWith(caches.match("index.html").then(hit=>{
-const net=fetch(r).then(res=>{if(res.ok){const cp=res.clone();caches.open(C).then(c=>c.put("index.html",cp))}return res}).catch(()=>hit||caches.match("./"));
+const net=fetch(r).then(res=>{if(res.ok){const cp=res.clone();caches.open(C).then(c=>c.put("index.html",cp))}return res}).catch(()=>hit||caches.match("./")||caches.match("offline.html"));
 return hit||net;
 }));
 return;
