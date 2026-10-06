@@ -15,13 +15,14 @@ const DEAD_TOKEN = [
 
 async function send(username, notification, data, channelId, ttl, tag) {
   const snap = await db.collection("users").where("username", "==", username).limit(1).get();
-  if (snap.empty) return;
+  if (snap.empty) return false;
   const ref = snap.docs[0].ref;
   const tokens = ["fcm", "webfcm"].map((f) => [f, snap.docs[0].get(f)]).filter((t) => t[1]);
   if (!tokens.length) {
     console.log("no push token for", username);
-    return;
+    return false;
   }
+  let ok = false;
   const strData = Object.fromEntries(Object.entries(data || {}).map(([k, v]) => [k, String(v == null ? "" : v)]));
   await Promise.all(
     tokens.map(async ([field, token]) => {
@@ -43,6 +44,7 @@ async function send(username, notification, data, channelId, ttl, tag) {
             notification: Object.assign({ icon: "icon-192.png" }, tag ? { tag, renotify: true } : {}),
           },
         });
+        ok = true;
       } catch (e) {
         console.error("push failed for", username, field, e.code || e.message);
         if (DEAD_TOKEN.includes(e.code)) {
@@ -51,12 +53,28 @@ async function send(username, notification, data, channelId, ttl, tag) {
       }
     })
   );
+  return ok;
+}
+
+// Mark a message as "delivered" (2 gray ticks) for one person. Only ever moves forward.
+async function markDelivered(chat, username, t) {
+  if (!chat || !username || !(t > 0)) return;
+  const ref = db.collection("rcpt").doc(chat).collection("u").doc(username);
+  try {
+    await db.runTransaction(async (tx) => {
+      const cur = await tx.get(ref);
+      const d = (cur.exists && cur.get("d")) || 0;
+      if (t > d) tx.set(ref, { d: t }, { merge: true });
+    });
+  } catch (e) {
+    console.error("delivered mark failed", username, e.message);
+  }
 }
 
 // Someone @mentioned you in a group or private chat
 exports.onPing = onDocumentCreated({ document: "pings/{id}", region: REGION }, async (event) => {
   const p = event.data.data();
-  await send(
+  const ok = await send(
     p.to,
     { title: p.chat.startsWith("dm_") ? `${p.from} pinged you` : `${p.from} pinged you in ${p.title}`, body: p.text || "" },
     { type: "ping", chat: p.chat, title: p.title },
@@ -64,6 +82,7 @@ exports.onPing = onDocumentCreated({ document: "pings/{id}", region: REGION }, a
     3600 * 1000,
     "ping_" + p.chat
   );
+  if (ok && p.t) await markDelivered(p.chat, p.to, p.t);
 });
 
 // Every new message: notify the other people in the chat, even when the app is closed.
@@ -98,7 +117,10 @@ exports.onMessage = onDocumentCreated({ document: "msgs/{chat}/items/{msg}", reg
     ? "File: " + (m.fname || "")
     : "New message";
   await Promise.all(
-    targets.map((u) => send(u, { title, body }, { type: "msg", chat, title: chatName }, "messages", 3600 * 1000, "msg_" + chat))
+    targets.map(async (u) => {
+      const ok = await send(u, { title, body }, { type: "msg", chat, title: chatName, mt: m.t }, "messages", 3600 * 1000, "msg_" + chat);
+      if (ok) await markDelivered(chat, u, m.t);
+    })
   );
 });
 
