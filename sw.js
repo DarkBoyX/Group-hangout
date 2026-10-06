@@ -4,7 +4,7 @@ self.addEventListener("notificationclick",e=>{
 e.notification.close();
 e.waitUntil(clients.matchAll({type:"window",includeUncontrolled:true}).then(l=>{for(const c of l){if("focus" in c)return c.focus()}return clients.openWindow("./")}));
 });
-const C="group-hangout-v12";
+const C="group-hangout-v13";
 self.addEventListener("install",e=>{
 e.waitUntil(caches.open(C).then(c=>c.addAll(["./","index.html","manifest.json","icon.svg","icon-192.png","icon-512.png"])));
 self.skipWaiting();
@@ -32,3 +32,31 @@ return res;
 return hit||net;
 }));
 });
+
+/* ---- background sync: tell open windows to flush anything queued while offline ---- */
+self.addEventListener("sync",e=>{
+if(e.tag==="sync-messages")e.waitUntil(clients.matchAll({type:"window",includeUncontrolled:true}).then(l=>l.forEach(c=>c.postMessage({type:"sync"}))));
+});
+/* ---- periodic sync: keep the cached app fresh ---- */
+self.addEventListener("periodicsync",e=>{
+if(e.tag==="refresh-app")e.waitUntil(caches.open(C).then(c=>c.add("index.html")).catch(()=>{}));
+});
+/* ---- push: Firebase (above) already shows its own notifications, this only covers plain web-push payloads ---- */
+self.addEventListener("push",e=>{
+let d=null;try{d=e.data&&e.data.json()}catch(x){}
+if(!d||d.notification||d.fcmMessageId||d.from||d.data||!d.title)return;
+e.waitUntil(self.registration.showNotification(d.title,{body:d.body||"",icon:"icon-192.png",badge:"icon-192.png",tag:d.tag||"hangout"}));
+});
+/* ---- Windows widget ---- */
+async function paintWidget(w){
+try{
+if(!self.widgets||!w||!w.definition)return;
+const t=await(await fetch(w.definition.msAcTemplate)).text();
+const d=await(await fetch(w.definition.data)).text();
+await self.widgets.updateByTag(w.definition.tag,{template:t,data:d});
+}catch(x){}
+}
+self.addEventListener("widgetinstall",e=>e.waitUntil(paintWidget(e.widget)));
+self.addEventListener("widgetresume",e=>e.waitUntil(paintWidget(e.widget)));
+self.addEventListener("widgetclick",e=>{if(e.action==="open")e.waitUntil(clients.openWindow("./?tab=chats"))});
+self.addEventListener("widgetuninstall",()=>{});
