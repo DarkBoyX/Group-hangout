@@ -4,7 +4,7 @@ self.addEventListener("notificationclick",e=>{
 e.notification.close();
 e.waitUntil(clients.matchAll({type:"window",includeUncontrolled:true}).then(l=>{for(const c of l){if("focus" in c)return c.focus()}return clients.openWindow("./")}));
 });
-const C="group-hangout-v10";
+const C="group-hangout-v11";
 self.addEventListener("install",e=>{
 e.waitUntil(caches.open(C).then(c=>c.addAll(["./","index.html","manifest.json","icon.svg","icon-192.png","icon-512.png"])));
 self.skipWaiting();
