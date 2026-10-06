@@ -4,7 +4,7 @@ self.addEventListener("notificationclick",e=>{
 e.notification.close();
 e.waitUntil(clients.matchAll({type:"window",includeUncontrolled:true}).then(l=>{for(const c of l){if("focus" in c)return c.focus()}return clients.openWindow("./")}));
 });
-const C="group-hangout-v11";
+const C="group-hangout-v12";
 self.addEventListener("install",e=>{
 e.waitUntil(caches.open(C).then(c=>c.addAll(["./","index.html","manifest.json","icon.svg","icon-192.png","icon-512.png"])));
 self.skipWaiting();
@@ -17,6 +17,13 @@ const r=e.request;
 if(r.method!=="GET")return;
 const u=new URL(r.url);
 if(u.origin!==location.origin&&u.hostname!=="www.gstatic.com")return;
+if(r.mode==="navigate"){
+e.respondWith(caches.match("index.html").then(hit=>{
+const net=fetch(r).then(res=>{if(res.ok){const cp=res.clone();caches.open(C).then(c=>c.put("index.html",cp))}return res}).catch(()=>hit||caches.match("./"));
+return hit||net;
+}));
+return;
+}
 e.respondWith(caches.match(r).then(hit=>{
 const net=fetch(r).then(res=>{
 if(res.ok||res.type==="opaque"){const cp=res.clone();caches.open(C).then(c=>c.put(r,cp))}
