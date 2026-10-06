@@ -7,12 +7,21 @@ const db = admin.firestore();
 // Must match your Firestore location. us-central1 works for the default "nam5" setup.
 const REGION = "us-central1";
 
+const DEAD_TOKEN = [
+  "messaging/registration-token-not-registered",
+  "messaging/invalid-registration-token",
+  "messaging/invalid-argument",
+];
+
 async function send(username, notification, data, channelId, ttl, tag) {
   const snap = await db.collection("users").where("username", "==", username).limit(1).get();
   if (snap.empty) return;
   const ref = snap.docs[0].ref;
   const token = snap.docs[0].get("fcm");
-  if (!token) return;
+  if (!token) {
+    console.log("no push token for", username);
+    return;
+  }
   try {
     await admin.messaging().send({
       token,
@@ -28,7 +37,8 @@ async function send(username, notification, data, channelId, ttl, tag) {
       },
     });
   } catch (e) {
-    if (e.code === "messaging/registration-token-not-registered") {
+    console.error("push failed for", username, e.code || e.message);
+    if (DEAD_TOKEN.includes(e.code)) {
       await ref.update({ fcm: admin.firestore.FieldValue.delete() }).catch(() => {});
     }
   }
@@ -44,6 +54,42 @@ exports.onPing = onDocumentCreated({ document: "pings/{id}", region: REGION }, a
     "pings",
     3600 * 1000,
     "ping_" + p.chat
+  );
+});
+
+// Every new message: notify the other people in the chat, even when the app is closed.
+// People who were @mentioned already get the "pinged you" notification above, so skip them here.
+exports.onMessage = onDocumentCreated({ document: "msgs/{chat}/items/{msg}", region: REGION }, async (event) => {
+  const chat = event.params.chat;
+  const m = event.data.data();
+  if (!m || !m.from) return;
+  let targets;
+  let title;
+  let chatName = m.from;
+  if (chat.startsWith("dm_")) {
+    targets = chat.slice(3).split("__").filter((u) => u !== m.from);
+    title = m.from;
+  } else {
+    const g = await db.collection("groups").doc(chat).get();
+    if (!g.exists) return;
+    chatName = g.get("name") || "a group";
+    targets = (g.get("members") || []).filter((u) => u !== m.from);
+    title = `${m.from} in ${chatName}`;
+  }
+  const mentioned = new Set(m.mentions || []);
+  targets = targets.filter((u) => !mentioned.has(u));
+  if (!targets.length) return;
+  const body = m.text
+    ? String(m.text).slice(0, 140)
+    : m.voice
+    ? "Voice message"
+    : m.img
+    ? "Photo"
+    : m.file
+    ? "File: " + (m.fname || "")
+    : "New message";
+  await Promise.all(
+    targets.map((u) => send(u, { title, body }, { type: "msg", chat, title: chatName }, "messages", 3600 * 1000, "msg_" + chat))
   );
 });
 
