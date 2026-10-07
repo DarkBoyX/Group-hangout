@@ -107,7 +107,11 @@ exports.onMessage = onDocumentCreated({ document: "msgs/{chat}/items/{msg}", reg
   const mentioned = new Set(m.mentions || []);
   targets = targets.filter((u) => !mentioned.has(u));
   if (!targets.length) return;
-  const body = m.text
+  // Call log entries: only push the missed ones (the ring itself already notified people)
+  if (m.call && m.call.ans) return;
+  const body = m.call
+    ? "Missed call"
+    : m.text
     ? String(m.text).slice(0, 140)
     : m.voice
     ? "Voice message"
