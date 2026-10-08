@@ -74,6 +74,20 @@ async function markDelivered(chat, username, t) {
 // Someone @mentioned you in a group or private chat
 exports.onPing = onDocumentCreated({ document: "pings/{id}", region: REGION }, async (event) => {
   const p = event.data.data();
+  if (p.kind === "call") {
+    const dm = p.chat.startsWith("dm_");
+    if (await claimCallPush(p.chat, p.to)) {
+      await send(
+        p.to,
+        { title: dm ? `${p.from} is calling` : `${p.from} started a call in ${p.title}`, body: dm ? "Tap to answer" : "Tap to join" },
+        { type: "call", chat: p.chat, title: p.title },
+        "calls",
+        30000,
+        "call_" + p.chat
+      );
+    }
+    return;
+  }
   const ok = await send(
     p.to,
     { title: p.chat.startsWith("dm_") ? `${p.from} pinged you` : `${p.from} pinged you in ${p.title}`, body: p.text || "" },
@@ -113,6 +127,8 @@ exports.onMessage = onDocumentCreated({ document: "msgs/{chat}/items/{msg}", reg
     ? "Missed call"
     : m.text
     ? String(m.text).slice(0, 140)
+    : m.music
+    ? "Music: " + String((m.music && m.music.name) || "").slice(0, 60)
     : m.voice
     ? "Voice message"
     : m.img
@@ -122,11 +138,27 @@ exports.onMessage = onDocumentCreated({ document: "msgs/{chat}/items/{msg}", reg
     : "New message";
   await Promise.all(
     targets.map(async (u) => {
-      const ok = await send(u, { title, body }, { type: "msg", chat, title: chatName, mt: m.t }, "messages", 3600 * 1000, "msg_" + chat);
+      const ok = await send(u, { title, body }, { type: "msg", chat, title: chatName, mt: m.t }, "messages", 3600 * 1000, m.call ? "call_" + chat : "msg_" + chat);
       if (ok) await markDelivered(chat, u, m.t);
     })
   );
 });
+
+// Both the call document and the call ping can ring someone. This makes sure each person is only rung once.
+async function claimCallPush(chat, to) {
+  const ref = db.collection("callpush").doc(chat + "__" + to);
+  try {
+    return await db.runTransaction(async (tx) => {
+      const d = await tx.get(ref);
+      const t = d.exists ? d.get("t") || 0 : 0;
+      if (Date.now() - t < 20000) return false;
+      tx.set(ref, { t: Date.now() });
+      return true;
+    });
+  } catch (e) {
+    return true;
+  }
+}
 
 // Someone starts a call: ring the other person
 const fresh = (c) => {
@@ -158,6 +190,8 @@ exports.onCall = onDocumentWritten({ document: "calls/{id}", region: REGION }, a
     title = name;
   }
   await Promise.all(
-    targets.map((u) => send(u, { title: head, body }, { type: "call", chat: id, title }, "calls", 30000, "call_" + id))
+    targets.map(async (u) => {
+      if (await claimCallPush(id, u)) await send(u, { title: head, body }, { type: "call", chat: id, title }, "calls", 30000, "call_" + id);
+    })
   );
 });
