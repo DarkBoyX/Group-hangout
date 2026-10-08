@@ -10,7 +10,6 @@ const REGION = "us-central1";
 const DEAD_TOKEN = [
   "messaging/registration-token-not-registered",
   "messaging/invalid-registration-token",
-  "messaging/invalid-argument",
 ];
 
 async function send(username, notification, data, channelId, ttl, tag) {
@@ -35,7 +34,7 @@ async function send(username, notification, data, channelId, ttl, tag) {
             priority: "high",
             ttl,
             notification: Object.assign(
-              { channelId, sound: "default", defaultVibrateTimings: true, visibility: "public", notificationPriority: "PRIORITY_MAX" },
+              { channelId, sound: "default", defaultVibrateTimings: true, visibility: "public", priority: "max" },
               tag ? { tag } : {}
             ),
           },
