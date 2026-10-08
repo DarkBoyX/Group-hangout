@@ -910,6 +910,37 @@ jobs:
           python3 patch_android.py
           npx cap sync android
 
+      - name: Use the Group Hangout logo as the app icon
+        run: |
+          pip install pillow
+          python3 - <<'PY'
+          from PIL import Image, ImageDraw
+          import pathlib
+          art = Image.open("icon-512.png").convert("RGB")
+          res = pathlib.Path("android/app/src/main/res")
+          legacy = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
+          fore = {"mdpi": 108, "hdpi": 162, "xhdpi": 216, "xxhdpi": 324, "xxxhdpi": 432}
+          for d in legacy:
+              folder = res / ("mipmap-" + d)
+              folder.mkdir(parents=True, exist_ok=True)
+              n = legacy[d]
+              big = art.resize((n * 4, n * 4), Image.LANCZOS)
+              sq = Image.new("L", (n * 4, n * 4), 0)
+              ImageDraw.Draw(sq).rounded_rectangle([0, 0, n * 4 - 1, n * 4 - 1], radius=int(n * 4 * 0.22), fill=255)
+              a = big.convert("RGBA"); a.putalpha(sq)
+              a.resize((n, n), Image.LANCZOS).save(folder / "ic_launcher.png")
+              ci = Image.new("L", (n * 4, n * 4), 0)
+              ImageDraw.Draw(ci).ellipse([0, 0, n * 4 - 1, n * 4 - 1], fill=255)
+              b = big.convert("RGBA"); b.putalpha(ci)
+              b.resize((n, n), Image.LANCZOS).save(folder / "ic_launcher_round.png")
+              f = fore[d]
+              art.resize((f, f), Image.LANCZOS).save(folder / "ic_launcher_foreground.png")
+          vals = res / "values"
+          vals.mkdir(parents=True, exist_ok=True)
+          (vals / "ic_launcher_background.xml").write_text('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#060606</color>\n</resources>\n')
+          print("launcher icons written")
+          PY
+
       - name: Build APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
