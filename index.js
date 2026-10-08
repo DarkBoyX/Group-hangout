@@ -1,4 +1,5 @@
 const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
+const { onCall: onCallable, HttpsError } = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
 
 admin.initializeApp();
@@ -10,6 +11,7 @@ const REGION = "us-central1";
 const DEAD_TOKEN = [
   "messaging/registration-token-not-registered",
   "messaging/invalid-registration-token",
+  "messaging/invalid-argument",
 ];
 
 async function send(username, notification, data, channelId, ttl, tag) {
@@ -34,7 +36,7 @@ async function send(username, notification, data, channelId, ttl, tag) {
             priority: "high",
             ttl,
             notification: Object.assign(
-              { channelId, sound: "default", defaultVibrateTimings: true, visibility: "public", priority: "max" },
+              { channelId, sound: "default", defaultVibrateTimings: true, visibility: "public", notificationPriority: "PRIORITY_MAX" },
               tag ? { tag } : {}
             ),
           },
@@ -193,4 +195,97 @@ exports.onCall = onDocumentWritten({ document: "calls/{id}", region: REGION }, a
       if (await claimCallPush(id, u)) await send(u, { title: head, body }, { type: "call", chat: id, title }, "calls", 30000, "call_" + id);
     })
   );
+});
+
+
+// ---------------------------------------------------------------------------
+// Notifications: being added to a group
+// ---------------------------------------------------------------------------
+exports.onGroupWrite = onDocumentWritten({ document: "groups/{id}", region: REGION }, async (event) => {
+  const after = event.data.after.exists ? event.data.after.data() : null;
+  if (!after || after.meeting) return;
+  const before = event.data.before.exists ? event.data.before.data() : null;
+  const prev = new Set((before && before.members) || []);
+  const added = (after.members || []).filter((u) => !prev.has(u) && u !== after.owner);
+  if (!added.length) return;
+  const name = after.name || "a group";
+  await Promise.all(
+    added.map((u) =>
+      send(
+        u,
+        { title: "Added to a group", body: `You were added to ${name}` },
+        { type: "group", chat: event.params.id, title: name },
+        "messages",
+        3600 * 1000,
+        "grp_" + event.params.id
+      )
+    )
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Notifications: friend requests and new chats (accepted requests)
+// ---------------------------------------------------------------------------
+exports.onRequestWrite = onDocumentWritten({ document: "requests/{id}", region: REGION }, async (event) => {
+  const after = event.data.after.exists ? event.data.after.data() : null;
+  if (!after) return;
+  const before = event.data.before.exists ? event.data.before.data() : null;
+  if (after.status === "pending" && (!before || before.status !== "pending")) {
+    await send(
+      after.to,
+      { title: "New friend request", body: `${after.from} wants to be your friend` },
+      { type: "friend", from: after.from },
+      "messages",
+      24 * 3600 * 1000,
+      "req_" + after.from
+    );
+  } else if (after.status === "accepted" && before && before.status !== "accepted") {
+    const chat = "dm_" + [after.from, after.to].sort().join("__");
+    await send(
+      after.from,
+      { title: "Friend request accepted", body: `${after.to} accepted your request. Say hi!` },
+      { type: "msg", chat, title: after.to },
+      "messages",
+      24 * 3600 * 1000,
+      "acc_" + after.to
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Email verification. The person clicks the link Firebase emailed to their real address, the web
+// page signs in with that link and sends us the ID token. We check it really belongs to the email
+// they gave at sign up, then mark the account as verified (only this function can write that).
+// ---------------------------------------------------------------------------
+exports.verifyEmail = onCallable({ region: REGION }, async (req) => {
+  const d = req.data || {};
+  const token = String(d.token || "");
+  const u = String(d.u || "").toLowerCase();
+  if (!token || !/^[a-z0-9_]{3,20}$/.test(u)) throw new HttpsError("invalid-argument", "Missing information.");
+
+  let dec;
+  try {
+    dec = await admin.auth().verifyIdToken(token);
+  } catch (e) {
+    throw new HttpsError("unauthenticated", "This verification link could not be checked. Request a new email.");
+  }
+  const email = String(dec.email || "").toLowerCase();
+  if (!email || !dec.email_verified) throw new HttpsError("failed-precondition", "That email is not verified yet.");
+
+  try {
+    await admin.auth().getUserByEmail(u + "@grouphangout.app");
+  } catch (e) {
+    throw new HttpsError("not-found", "That account does not exist.");
+  }
+
+  const pend = await db.collection("emailpending").doc(u).get();
+  if (!pend.exists || String(pend.get("email") || "").toLowerCase() !== email) {
+    throw new HttpsError("permission-denied", "This email does not match the one used for the account.");
+  }
+  const dup = await db.collection("verified").where("email", "==", email).limit(2).get();
+  if (dup.docs.some((x) => x.id !== u)) {
+    throw new HttpsError("already-exists", "This email is already used by another account.");
+  }
+  await db.collection("verified").doc(u).set({ email, t: Date.now() });
+  return { ok: true };
 });
