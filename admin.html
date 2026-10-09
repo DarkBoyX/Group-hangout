@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://group-hangout-api.onrender.com; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Group Hangout Admin</title>
+<style>
+:root{--bg:#09090a;--panel:#161618;--panel2:#202023;--line:#2e2e32;--text:#ececee;--muted:#8e8e95;--danger:#c0392b;--ok:#3fb27f;--warn:#d9a441}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+input,select,textarea{width:100%;padding:11px 12px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);outline:none}
+input:focus,select:focus,textarea:focus{border-color:#55555c}
+textarea{min-height:70px;resize:vertical}
+button{border:0;border-radius:12px;padding:10px 16px;font-weight:600;background:#e4e4e7;color:#09090a;cursor:pointer}
+button.ghost{background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+button.danger{background:var(--danger);color:#fff}
+button.warn{background:var(--warn);color:#1b1304}
+button:disabled{opacity:.5;cursor:default}
+.wrap{max-width:980px;margin:0 auto;padding:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:14px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:0 0 10px}h3{font-size:14px;margin:14px 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.muted{color:var(--muted)}.small{font-size:13px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.grow{flex:1;min-width:0}
+.top{display:flex;align-items:center;gap:10px;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap}
+.tabs{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.tabs button{background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+.tabs button.on{background:#e4e4e7;color:#09090a}
+.err{color:#ff7b72;min-height:18px;margin-top:8px;font-size:14px}
+.okmsg{color:var(--ok);margin-top:8px;font-size:14px}
+.item{display:flex;gap:10px;align-items:center;padding:12px;border:1px solid var(--line);border-radius:14px;margin-bottom:8px;background:var(--panel2);cursor:pointer}
+.item:hover{border-color:#55555c}
+.tag{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:700;background:var(--panel2);border:1px solid var(--line);margin-right:6px}
+.tag.red{background:#3a1512;border-color:#6b2a24;color:#ff9b91}
+.tag.green{background:#12291f;border-color:#235a40;color:#8fe0b8}
+.tag.amber{background:#33270d;border-color:#6b5320;color:#f0cf86}
+.kv{display:grid;grid-template-columns:150px 1fr;gap:6px 12px;font-size:14px}
+.kv div:nth-child(odd){color:var(--muted)}
+.kv div{word-break:break-word}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:8px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;position:sticky;top:0;background:var(--panel)}
+.scroll{overflow:auto;max-height:68vh;border:1px solid var(--line);border-radius:12px}
+.actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:12px}
+.box{border:1px solid var(--line);border-radius:14px;padding:12px;background:var(--panel2)}
+.box.red{border-color:#6b2a24}
+label{display:block;font-size:13px;color:var(--muted);margin:8px 0 4px}
+.hide{display:none!important}
+.banner{background:#33270d;border:1px solid #6b5320;color:#f0cf86;border-radius:12px;padding:10px 12px;font-size:13px;margin-bottom:12px}
+@media(max-width:560px){.kv{grid-template-columns:110px 1fr}}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script>
+"use strict";
+var FN = "https://group-hangout-api.onrender.com/";
+var session = "", me = {name:"", role:""}, expires = 0;
+var app = document.getElementById("app");
+
+/* ---------- tiny helpers (everything is built with textContent, never innerHTML) ---------- */
+function h(tag, attrs){
+  var el = document.createElement(tag);
+  attrs = attrs || {};
+  for (var k in attrs){
+    if (k === "text") el.textContent = attrs[k];
+    else if (k === "class") el.className = attrs[k];
+    else if (k.slice(0,2) === "on") el.addEventListener(k.slice(2), attrs[k]);
+    else el.setAttribute(k, attrs[k]);
+  }
+  for (var i = 2; i < arguments.length; i++){
+    var c = arguments[i];
+    if (c == null || c === false) continue;
+    el.append(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+  return el;
+}
+function clear(el){ while (el.firstChild) el.removeChild(el.firstChild); }
+function fmt(ms){ return ms ? new Date(ms).toLocaleString() : "-"; }
+function left(ms){
+  var s = Math.max(0, Math.round(ms/1000)), d = Math.floor(s/86400), hr = Math.floor(s%86400/3600), m = Math.floor(s%3600/60);
+  return (d?d+"d ":"") + (hr?hr+"h ":"") + m + "m";
+}
+function api(fn, data){
+  data = data || {};
+  if (session) data.session = session;
+  return fetch(FN + fn, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({data:data})})
+    .catch(function(){ throw new Error("Cannot reach the admin server. It may be waking up (free servers sleep). Wait a minute and try again."); })
+    .then(function(r){ return r.json().catch(function(){ return {}; }); })
+    .then(function(j){
+      if (j.error){
+        var msg = j.error.message || "Something went wrong.";
+        if (j.error.status === "UNAUTHENTICATED" && session){ signOut("Your session ended. Sign in again."); }
+        throw new Error(msg);
+      }
+      return j.result;
+    });
+}
+function signOut(msg){ session = ""; me = {name:"", role:""}; showLogin(msg || ""); }
+
+/* ---------- login / first-time setup ---------- */
+function showLogin(note, setup){
+  clear(app);
+  var name = h("input", {placeholder:"Admin name", autocomplete:"username", autocapitalize:"none"});
+  var pw = h("input", {placeholder:"Password", type:"password", autocomplete:"current-password"});
+  var code = h("input", {placeholder:"Setup code (from Firebase)", type:"password", autocomplete:"off"});
+  var err = h("div", {class:"err", text:note || ""});
+  var go = h("button", {text: setup ? "Create first admin" : "Sign in"});
+  var sw = h("button", {class:"ghost", text: setup ? "Back to sign in" : "First time? Set up the first admin"});
+  if (!setup) code.classList.add("hide");
+  sw.addEventListener("click", function(){ showLogin("", !setup); });
+  function run(){
+    err.textContent = ""; go.disabled = true;
+    var p = setup
+      ? api("adminSetup", {name:name.value, password:pw.value, code:code.value}).then(function(){ return api("adminLogin", {name:name.value, password:pw.value}); })
+      : api("adminLogin", {name:name.value, password:pw.value});
+    p.then(function(r){ session = r.session; me = {name:r.name, role:r.role}; expires = r.expires; pw.value = ""; code.value = ""; showMain(); })
+     .catch(function(e){ err.textContent = e.message; go.disabled = false; });
+  }
+  go.addEventListener("click", run);
+  pw.addEventListener("keydown", function(e){ if (e.key === "Enter") run(); });
+  app.append(h("div", {class:"card", style:"max-width:420px;margin:8vh auto"},
+    h("h1", {text:"Group Hangout Admin"}),
+    h("div", {class:"muted small", style:"margin-bottom:14px", text: setup ? "Create the first admin. You need the setup code you saved in Firebase." : "Authorized staff only. Every action is logged."}),
+    name, h("div", {style:"height:8px"}), pw, h("div", {style:"height:8px"}), code, err,
+    h("div", {class:"row", style:"margin-top:12px"}, go), h("div", {style:"margin-top:10px"}, sw)));
+  name.focus();
+}
+
+/* ---------- main shell ---------- */
+var tab = "users";
+function showMain(){
+  clear(app);
+  var tabs = h("div", {class:"tabs"});
+  var body = h("div");
+  var list = [["users","Accounts"],["admin","Admin log"],["security","Security log"]];
+  if (me.role === "owner") list.push(["admins","Admins"]);
+  list.push(["me","My password"]);
+  list.forEach(function(t){
+    var b = h("button", {text:t[1], onclick:function(){ tab = t[0]; draw(); }});
+    b.dataset.t = t[0]; tabs.append(b);
+  });
+  app.append(
+    h("div", {class:"top"},
+      h("div", null, h("h1", {text:"Group Hangout Admin"}), h("div", {class:"muted small", text:"Signed in as " + me.name + " (" + me.role + ")"})),
+      h("button", {class:"ghost", text:"Sign out", onclick:function(){ signOut("Signed out."); }})),
+    tabs, body);
+  function draw(){
+    Array.prototype.forEach.call(tabs.children, function(b){ b.classList.toggle("on", b.dataset.t === tab); });
+    clear(body);
+    if (tab === "users") usersView(body);
+    else if (tab === "admin") logsView(body, "admin");
+    else if (tab === "security") logsView(body, "security");
+    else if (tab === "admins") adminsView(body);
+    else meView(body);
+  }
+  draw();
+}
+
+/* ---------- accounts ---------- */
+function usersView(root){
+  var q = h("input", {placeholder:"Search a username or an email address", autocapitalize:"none"});
+  var res = h("div", {style:"margin-top:12px"});
+  var detail = h("div");
+  root.append(h("div", {class:"card"}, h("h2", {text:"Account management"}), q, res), detail);
+  var timer = null;
+  function search(){
+    api("adminSearch", {q:q.value}).then(function(r){
+      clear(res);
+      if (!r.users.length){ res.append(h("div", {class:"muted", text:"No accounts found."})); return; }
+      r.users.forEach(function(u){
+        res.append(h("div", {class:"item", onclick:function(){ openUser(u.u, detail); }},
+          h("div", {class:"grow"}, h("b", {text:"@" + u.u}), " ", h("span", {class:"muted", text:u.name})),
+          u.terminated ? h("span", {class:"tag red", text:"terminated"}) : null,
+          u.susp > Date.now() ? h("span", {class:"tag amber", text:"suspended"}) : null));
+      });
+    }).catch(function(e){ clear(res); res.append(h("div", {class:"err", text:e.message})); });
+  }
+  q.addEventListener("input", function(){ clearTimeout(timer); timer = setTimeout(search, 300); });
+  search();
+}
+
+function openUser(u, host){
+  clear(host);
+  host.append(h("div", {class:"card muted", text:"Loading @" + u + "..."}));
+  api("adminUser", {u:u}).then(function(d){ renderUser(d, host); }).catch(function(e){ clear(host); host.append(h("div", {class:"card err", text:e.message})); });
+}
+
+function renderUser(d, host){
+  clear(host);
+  var u = d.u, now = Date.now();
+  var suspended = d.suspension && d.suspension.until > now;
+  var status = h("div", null,
+    d.terminated ? h("span", {class:"tag red", text:"Terminated"}) : null,
+    suspended ? h("span", {class:"tag amber", text:"Suspended"}) : null,
+    d.verified ? h("span", {class:"tag green", text:"Email verified"}) : h("span", {class:"tag", text:"Email not verified"}),
+    d.online && d.online.on && now - d.online.t < 100000 ? h("span", {class:"tag green", text:"Online"}) : null);
+  var kv = h("div", {class:"kv"});
+  function add(k, v){ kv.append(h("div", {text:k}), h("div", {text: v == null || v === "" ? "-" : String(v)})); }
+  add("Username", "@" + u);
+  add("Display name", d.displayName);
+  add("Bio", d.bio);
+  add("Account ID", d.uid);
+  add("Email (given)", d.email);
+  add("Verified email", d.verifiedEmail);
+  add("Created", fmt(d.created));
+  add("Last sign in", fmt(d.lastSignIn));
+  add("Last seen", d.online ? fmt(d.online.t) : "-");
+  add("Friends", d.friends.length + (d.friends.length ? ": " + d.friends.slice(0, 25).join(", ") + (d.friends.length > 25 ? "..." : "") : ""));
+  add("Groups", d.groups.length ? d.groups.map(function(g){ return g.name + (g.owner ? " (owner)" : "") + (g.meeting ? " [meeting]" : ""); }).join(", ") : "0");
+  add("Devices", d.devices.length ? d.devices.map(function(x){ return x.label + (x.app ? " (app)" : " (web)") + " " + fmt(x.last); }).join("; ") : "0");
+  if (suspended){
+    add("Suspended until", d.suspension.until >= 8e15 ? "Permanently" : fmt(d.suspension.until) + " (" + left(d.suspension.until - now) + " left)");
+    add("Suspension reason", d.suspension.reason);
+    add("Suspended by", d.suspension.by);
+  }
+  if (d.terminated){
+    add("Terminated", fmt(d.terminated.t) + " by " + d.terminated.by);
+    add("Reason", d.terminated.reason);
+  }
+  var card = h("div", {class:"card"}, h("div", {class:"row"}, h("h2", {class:"grow", text:"@" + u}), status), kv);
+  host.append(card);
+
+  if (!d.exists || d.terminated){
+    host.append(h("div", {class:"card muted", text: d.terminated ? "This account was terminated." : "This account no longer exists."}));
+    historyCard(d, host);
+    return;
+  }
+
+  /* actions */
+  var msg = h("div");
+  var actions = h("div", {class:"actions"});
+
+  var dur = h("select", null,
+    h("option", {value:"60", text:"1 hour"}), h("option", {value:"360", text:"6 hours"}), h("option", {value:"1440", text:"1 day"}),
+    h("option", {value:"4320", text:"3 days"}), h("option", {value:"10080", text:"7 days"}), h("option", {value:"43200", text:"30 days"}),
+    h("option", {value:"custom", text:"Custom (minutes)"}), h("option", {value:"permanent", text:"Permanent"}));
+  var custom = h("input", {type:"number", min:"1", placeholder:"Minutes", class:"hide"});
+  dur.addEventListener("change", function(){ custom.classList.toggle("hide", dur.value !== "custom"); });
+  var sReason = h("textarea", {placeholder:"Reason shown to the user", maxlength:"300"});
+  var sBtn = h("button", {class:"warn", text: suspended ? "Update suspension" : "Suspend user"});
+  sBtn.addEventListener("click", function(){
+    msg.textContent = "";
+    var perm = dur.value === "permanent", mins = dur.value === "custom" ? Number(custom.value) : Number(dur.value);
+    if (!sReason.value.trim()){ show(msg, "Enter a reason.", true); return; }
+    if (!confirm("Suspend @" + u + (perm ? " permanently" : " for " + left(mins*60000)) + "?")) return;
+    sBtn.disabled = true;
+    api("adminSuspend", {u:u, permanent:perm, minutes:mins, reason:sReason.value}).then(function(){ openUser(u, host); })
+      .catch(function(e){ show(msg, e.message, true); sBtn.disabled = false; });
+  });
+  var sBox = h("div", {class:"box"}, h("h2", {text:"Suspend user"}), h("label", {text:"Duration"}), dur, custom, h("label", {text:"Reason"}), sReason, h("div", {style:"margin-top:10px"}, sBtn));
+  if (suspended){
+    var un = h("button", {class:"ghost", style:"margin-left:8px", text:"Lift suspension"});
+    un.addEventListener("click", function(){
+      if (!confirm("Lift the suspension for @" + u + "?")) return;
+      api("adminUnsuspend", {u:u}).then(function(){ openUser(u, host); }).catch(function(e){ show(msg, e.message, true); });
+    });
+    sBox.lastChild.append(un);
+  }
+  actions.append(sBox);
+
+  var iReason = h("textarea", {placeholder:"Why do you need to sign in as this user? (support ticket, bug test...)", maxlength:"300"});
+  var iBtn = h("button", {text:"Impersonate (read-only)"});
+  iBtn.addEventListener("click", function(){
+    msg.textContent = "";
+    if (iReason.value.trim().length < 5){ show(msg, "Enter a reason (at least 5 characters).", true); return; }
+    if (!confirm("This will be logged under your name and the user's app shows a red admin bar. Continue?")) return;
+    iBtn.disabled = true;
+    var win = window.open("about:blank", "_blank");
+    api("adminImpersonate", {u:u, reason:iReason.value}).then(function(r){
+      var base = location.href.replace(/[^\/]*$/, "") + "index.html#imp=" + encodeURIComponent(r.token);
+      if (win) win.location.href = base; else show(msg, "Pop-up blocked. Allow pop-ups and try again.", true);
+      show(msg, "Impersonation started and logged. Use a private/incognito window if you also use the app yourself.", false);
+      iBtn.disabled = false; iReason.value = "";
+    }).catch(function(e){ if (win) win.close(); show(msg, e.message, true); iBtn.disabled = false; });
+  });
+  actions.append(h("div", {class:"box"}, h("h2", {text:"Admin impersonation"}),
+    h("div", {class:"muted small", text:"Opens the app signed in as this user, view-only. The user cannot be changed or messaged from it. Logged in the admin and security logs."}),
+    h("label", {text:"Reason (required)"}), iReason, h("div", {style:"margin-top:10px"}, iBtn)));
+
+  var tConfirm = h("input", {placeholder:"Type @" + u + " name to confirm", autocapitalize:"none"});
+  var tReason = h("textarea", {placeholder:"Reason (kept in the admin log)", maxlength:"300"});
+  var tBtn = h("button", {class:"danger", text:"Terminate account permanently"});
+  tBtn.addEventListener("click", function(){
+    msg.textContent = "";
+    if (tConfirm.value.trim().toLowerCase().replace(/^@/, "") !== u){ show(msg, "Type the username to confirm.", true); return; }
+    if (!tReason.value.trim()){ show(msg, "Enter a reason.", true); return; }
+    if (!confirm("PERMANENTLY delete @" + u + "? This cannot be undone.")) return;
+    tBtn.disabled = true; show(msg, "Terminating... this can take a moment.", false);
+    api("adminTerminate", {u:u, reason:tReason.value, confirm:u}).then(function(r){
+      show(msg, "Terminated. Friends removed: " + r.friends + ", groups deleted: " + r.groupsRemoved + ", groups left: " + r.groupsLeft + ".", false);
+      setTimeout(function(){ openUser(u, host); }, 900);
+    }).catch(function(e){ show(msg, e.message, true); tBtn.disabled = false; });
+  });
+  actions.append(h("div", {class:"box red"}, h("h2", {text:"Terminate user"}),
+    h("div", {class:"muted small", text:"Deletes the account and its data. Removes the person from friends, chats and groups. Groups they own are deleted and their members leave automatically."}),
+    h("label", {text:"Confirm"}), tConfirm, h("label", {text:"Reason"}), tReason, h("div", {style:"margin-top:10px"}, tBtn)));
+
+  host.append(h("div", {class:"card"}, h("h2", {text:"Actions"}), msg, actions));
+  historyCard(d, host);
+}
+function show(el, text, bad){ el.className = bad ? "err" : "okmsg"; el.textContent = text; }
+function historyCard(d, host){
+  if (!d.history || !d.history.length) return;
+  var t = h("table", null, h("thead", null, h("tr", null, h("th", {text:"When"}), h("th", {text:"Admin"}), h("th", {text:"Action"}), h("th", {text:"Details"}))));
+  var tb = h("tbody");
+  d.history.forEach(function(x){ tb.append(h("tr", null, h("td", {text:fmt(x.t)}), h("td", {text:x.admin}), h("td", {text:x.action}), h("td", {text:detailText(x.details)}))); });
+  t.append(tb);
+  host.append(h("div", {class:"card"}, h("h2", {text:"Admin history for this account"}), h("div", {class:"scroll"}, t)));
+}
+function detailText(o){
+  if (!o) return "";
+  return Object.keys(o).map(function(k){ return k + ": " + o[k]; }).join(" | ");
+}
+
+/* ---------- logs ---------- */
+function logsView(root, kind){
+  var isSec = kind === "security";
+  var tb = h("tbody");
+  var more = h("button", {class:"ghost", text:"Load older"});
+  var err = h("div", {class:"err"});
+  var oldest = 0;
+  var head = isSec
+    ? h("tr", null, h("th", {text:"When"}), h("th", {text:"Event"}), h("th", {text:"Admin"}), h("th", {text:"Account"}), h("th", {text:"IP"}), h("th", {text:"Details"}))
+    : h("tr", null, h("th", {text:"When"}), h("th", {text:"Admin"}), h("th", {text:"Action"}), h("th", {text:"Account"}), h("th", {text:"IP"}), h("th", {text:"Details"}));
+  root.append(h("div", {class:"card"}, h("h2", {text: isSec ? "Security log" : "Admin log"}),
+    h("div", {class:"muted small", style:"margin-bottom:10px", text: isSec ? "Sign ins, failed attempts, impersonation, suspensions and terminations." : "Every action, with the admin who did it. Logs cannot be edited or deleted."}),
+    err, h("div", {class:"scroll"}, h("table", null, h("thead", null, head), tb)), h("div", {style:"margin-top:10px"}, more)));
+  function load(){
+    more.disabled = true;
+    api("adminLogs", {kind:kind, before:oldest}).then(function(r){
+      r.logs.forEach(function(x){
+        oldest = x.t;
+        var ev = isSec ? x.type : x.action;
+        var hot = /impersonate|terminate|failed|blocked/.test(ev);
+        tb.append(h("tr", null, h("td", {text:fmt(x.t)}),
+          isSec ? h("td", null, h("span", {class: hot ? "tag red" : "tag", text:ev})) : h("td", {text:x.admin}),
+          isSec ? h("td", {text:x.admin}) : h("td", null, h("span", {class: hot ? "tag red" : "tag", text:ev})),
+          h("td", {text:x.target}), h("td", {text:x.ip}), h("td", {text:detailText(x.details)})));
+      });
+      more.disabled = r.logs.length < 80;
+      more.classList.toggle("hide", r.logs.length < 80 && oldest === 0);
+    }).catch(function(e){ err.textContent = e.message; more.disabled = false; });
+  }
+  more.addEventListener("click", load);
+  load();
+}
+
+/* ---------- admins (owner) + own password ---------- */
+function adminsView(root){
+  var listBox = h("div");
+  var n = h("input", {placeholder:"New admin name", autocapitalize:"none"});
+  var p = h("input", {placeholder:"Password (10+ characters)", type:"password", autocomplete:"new-password"});
+  var role = h("select", null, h("option", {value:"admin", text:"Admin"}), h("option", {value:"owner", text:"Owner (can manage admins)"}));
+  var msg = h("div");
+  var add = h("button", {text:"Add admin"});
+  root.append(h("div", {class:"card"}, h("h2", {text:"Admins"}), listBox),
+    h("div", {class:"card"}, h("h2", {text:"Add an admin"}), n, h("div", {style:"height:8px"}), p, h("div", {style:"height:8px"}), role, msg, h("div", {style:"margin-top:10px"}, add)));
+  function load(){
+    api("adminList").then(function(r){
+      clear(listBox);
+      r.admins.forEach(function(a){
+        var b = h("button", {class:"ghost", text: a.disabled ? "Enable" : "Disable", onclick:function(){
+          api("adminDisable", {name:a.name, disabled:!a.disabled}).then(load).catch(function(e){ alert(e.message); });
+        }});
+        if (a.name === me.name) b.classList.add("hide");
+        listBox.append(h("div", {class:"item", style:"cursor:default"}, h("div", {class:"grow"}, h("b", {text:a.name}), " ", h("span", {class:"muted small", text:a.role + (a.by ? " | added by " + a.by : "")})),
+          a.disabled ? h("span", {class:"tag red", text:"disabled"}) : null, b));
+      });
+    }).catch(function(e){ listBox.textContent = e.message; });
+  }
+  add.addEventListener("click", function(){
+    msg.textContent = ""; add.disabled = true;
+    api("adminCreate", {name:n.value, password:p.value, role:role.value}).then(function(){ show(msg, "Admin added.", false); n.value = ""; p.value = ""; load(); })
+      .catch(function(e){ show(msg, e.message, true); }).then(function(){ add.disabled = false; });
+  });
+  load();
+}
+function meView(root){
+  var c = h("input", {type:"password", placeholder:"Current password", autocomplete:"current-password"});
+  var n = h("input", {type:"password", placeholder:"New password (10+ characters)", autocomplete:"new-password"});
+  var msg = h("div");
+  var b = h("button", {text:"Change password"});
+  b.addEventListener("click", function(){
+    msg.textContent = ""; b.disabled = true;
+    api("adminPassword", {current:c.value, next:n.value}).then(function(){ signOut("Password changed. Sign in again."); })
+      .catch(function(e){ show(msg, e.message, true); b.disabled = false; });
+  });
+  root.append(h("div", {class:"card", style:"max-width:420px"}, h("h2", {text:"My password"}), c, h("div", {style:"height:8px"}), n, msg, h("div", {style:"margin-top:10px"}, b),
+    h("div", {class:"muted small", style:"margin-top:10px", text:"Changing it signs you out everywhere."})));
+}
+
+showLogin();
+</script>
+</body>
+</html>
