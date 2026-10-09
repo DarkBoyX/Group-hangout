@@ -1,0 +1,527 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function authed() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email.matches('.*@grouphangout[.]app');
+    }
+
+    function me() {
+      return request.auth.token.email.split('@')[0];
+    }
+
+    function prof() {
+      return get(/databases/$(database)/documents/profiles/$(me())).data;
+    }
+
+    // A signed-in person only counts as a full member when:
+    //  - their profile exists (old accounts have one, new accounts get it after email verification),
+    //  - that profile belongs to this exact login (nobody can take over a name by changing their email),
+    //  - and they are not suspended right now (only the admin functions can set susp).
+    function member() {
+      return authed()
+        && prof().get('uid', request.auth.uid) == request.auth.uid
+        && prof().get('susp', 0) < request.time.toMillis();
+    }
+
+    // Admin "sign in as" sessions can look around but cannot change anything.
+    function notImp() {
+      return !('imp' in request.auth.token);
+    }
+
+    function writer() {
+      return member() && notImp();
+    }
+
+    function other(m) {
+      return m[0] == me() ? m[1] : m[0];
+    }
+
+    function dmParty(chat) {
+      return chat.matches('dm_.*')
+        && ('dm_' + me() == chat.split('__')[0] || me() == chat.split('__')[1]);
+    }
+
+    function dmFriends(chat) {
+      return exists(/databases/$(database)/documents/friends/$(chat.replace('dm_', '')));
+    }
+
+    function groupMember(id) {
+      return me() in get(
+        /databases/$(database)/documents/groups/$(id)
+      ).data.members;
+    }
+
+    function chatOk(chat) {
+      return chat.matches('dm_.*')
+        ? (dmParty(chat) && dmFriends(chat))
+        : groupMember(chat);
+    }
+
+    match /config/{doc} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /users/{uid} {
+      allow read: if authed() && request.auth.uid == uid;
+
+      // The username here is what notifications are sent to, so it can only ever be your own.
+      allow create, update: if authed()
+        && notImp()
+        && request.auth.uid == uid
+        && request.resource.data.get('username', me()) == me()
+        && request.resource.data.get('email', '') is string
+        && request.resource.data.get('email', '').size() <= 254;
+    }
+
+    match /users/{uid}/devices/{dev} {
+      allow read: if authed() && request.auth.uid == uid;
+      allow create, update: if authed()
+        && notImp()
+        && request.auth.uid == uid;
+      allow delete: if authed() && notImp() && request.auth.uid == uid;
+    }
+
+    // Set only by the admin functions.
+    match /suspensions/{name} {
+      allow read: if authed() && name == me();
+      allow write: if false;
+    }
+    match /terminated/{name} {
+      allow read: if authed() && name == me();
+      allow write: if false;
+    }
+
+    // Set only by the verifyEmail Cloud Function, after the person clicked the link in their email.
+    match /verified/{name} {
+      allow read: if authed() && name == me();
+      allow write: if false;
+    }
+
+    // The email the person gave at sign up (the function checks the verified email matches this).
+    match /emailpending/{name} {
+      allow read: if authed() && name == me();
+      allow create, update: if authed()
+        && notImp()
+        && name == me()
+        && request.resource.data.keys().hasOnly(['email', 't'])
+        && request.resource.data.email is string
+        && request.resource.data.email.size() <= 254
+        && request.resource.data.t is number;
+    }
+
+    // Your friend list, readable only by you and your friends. Used for "People You May Know".
+    match /flists/{name} {
+      allow read: if member()
+        && (name == me()
+          || exists(/databases/$(database)/documents/friends/$(me() < name ? me() + '__' + name : name + '__' + me())));
+      allow create, update: if writer()
+        && name == me()
+        && request.resource.data.keys().hasOnly(['fl', 't'])
+        && request.resource.data.fl is list
+        && request.resource.data.fl.size() <= 500
+        && request.resource.data.t is number;
+    }
+
+    match /profiles/{name} {
+      allow read: if authed();
+
+      allow create: if authed()
+        && name == me()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['username', 'uid'])
+        && exists(/databases/$(database)/documents/verified/$(me()))
+        && !exists(/databases/$(database)/documents/terminated/$(me()));
+
+      allow update: if authed()
+        && notImp()
+        && name == me()
+        && resource.data.get('uid', request.auth.uid) == request.auth.uid
+        && request.resource.data.get('uid', request.auth.uid) == request.auth.uid
+        && request.resource.data.get('username', name) == resource.data.get('username', name)
+        && request.resource.data.diff(resource.data)
+            .affectedKeys()
+            .hasOnly(['name', 'bio', 'avatar', 'banner'])
+        && request.resource.data.get('name', '').size() <= 30
+        && request.resource.data.get('bio', '').size() <= 200
+        && request.resource.data.get('avatar', '').size() < 60000
+        && request.resource.data.get('banner', '').size() < 200000;
+    }
+
+    match /requests/{id} {
+      allow read: if member()
+        && (resource.data.from == me() || resource.data.to == me());
+
+      allow create: if writer()
+        && request.resource.data.from == me()
+        && request.resource.data.to != me()
+        && id == me() + '__' + request.resource.data.to
+        && request.resource.data.status == 'pending'
+        && !exists(/databases/$(database)/documents/blocks/$(request.resource.data.to + '__' + me()));
+
+      allow update: if writer()
+        && resource.data.to == me()
+        && request.resource.data.diff(resource.data)
+            .affectedKeys()
+            .hasOnly(['status'])
+        && request.resource.data.status in ['accepted', 'blocked'];
+
+      allow delete: if writer()
+        && (resource == null
+          || resource.data.from == me()
+          || resource.data.to == me());
+    }
+
+    // People you blocked. Only you can see or change your own list.
+    match /blocks/{id} {
+      allow read: if member() && resource.data.by == me();
+
+      allow create, update: if writer()
+        && request.resource.data.keys().hasOnly(['by', 'u', 't'])
+        && request.resource.data.by == me()
+        && request.resource.data.u is string
+        && request.resource.data.u != me()
+        && id == me() + '__' + request.resource.data.u
+        && request.resource.data.t is number;
+
+      allow delete: if writer() && resource.data.by == me();
+    }
+
+    match /friends/{id} {
+      allow read: if member()
+        && me() in resource.data.members;
+
+      allow create: if writer()
+        && me() in request.resource.data.members
+        && request.resource.data.members.size() == 2
+        && get(
+          /databases/$(database)/documents/requests/$(other(request.resource.data.members) + '__' + me())
+        ).data.status == 'pending';
+
+      allow delete: if writer()
+        && (resource == null || me() in resource.data.members);
+    }
+
+    match /groups/{id} {
+      allow read: if member()
+        && me() in resource.data.members;
+
+      allow create: if writer()
+        && request.resource.data.keys().hasOnly(['name', 'icon', 'owner', 'members', 'meeting', 'open', 'pending'])
+        && request.resource.data.keys().hasAll(['name', 'owner', 'members'])
+        && request.resource.data.owner == me()
+        && request.resource.data.members is list
+        && me() in request.resource.data.members
+        && request.resource.data.members.size() <= 100
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 30
+        && request.resource.data.get('icon', '') is string
+        && request.resource.data.get('icon', '').size() < 100000
+        && request.resource.data.get('meeting', false) is bool
+        && request.resource.data.get('open', false) is bool
+        && request.resource.data.get('pending', []) is list
+        && request.resource.data.get('pending', []).size() == 0;
+
+      allow update: if writer()
+        && resource.data.owner == me()
+        && request.resource.data.owner == resource.data.owner
+        && request.resource.data.diff(resource.data)
+            .affectedKeys()
+            .hasOnly(['name', 'icon', 'members', 'banned', 'pending'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 30
+        && request.resource.data.get('icon', '') is string
+        && request.resource.data.get('icon', '').size() < 100000
+        && request.resource.data.members is list
+        && me() in request.resource.data.members
+        && request.resource.data.members.size() <= 100
+        && request.resource.data.get('banned', []) is list
+        && request.resource.data.get('banned', []).size() <= 200
+        && request.resource.data.get('pending', []) is list
+        && request.resource.data.get('pending', []).size() <= 100
+        && !request.resource.data.members.hasAny(request.resource.data.get('banned', []));
+
+      allow update: if writer()
+        && me() in resource.data.members
+        && resource.data.owner != me()
+        && request.resource.data.diff(resource.data)
+            .affectedKeys()
+            .hasOnly(['members'])
+        && !(me() in request.resource.data.members)
+        && resource.data.members.hasAll(request.resource.data.members);
+
+      allow update: if writer()
+        && !(me() in resource.data.members)
+        && !(me() in resource.data.get('banned', []))
+        && (!resource.data.get('meeting', false) || resource.data.get('open', false))
+        && request.resource.data.diff(resource.data)
+            .affectedKeys()
+            .hasOnly(['members'])
+        && me() in request.resource.data.members
+        && request.resource.data.members.hasAll(resource.data.members)
+        && request.resource.data.members.size() == resource.data.members.size() + 1
+        && request.resource.data.members.size() <= 100;
+
+      allow update: if writer()
+        && !(me() in resource.data.members)
+        && !(me() in resource.data.get('banned', []))
+        && resource.data.get('meeting', false) == true
+        && request.resource.data.diff(resource.data)
+            .affectedKeys()
+            .hasOnly(['pending'])
+        && me() in request.resource.data.pending
+        && request.resource.data.pending.hasAll(resource.data.get('pending', []))
+        && request.resource.data.pending.size() <= resource.data.get('pending', []).size() + 1
+        && request.resource.data.pending.size() <= 100;
+
+      allow delete: if writer()
+        && resource.data.owner == me();
+    }
+
+    match /msgs/{chat}/items/{msg} {
+      allow read: if member() && chatOk(chat);
+
+      allow create: if writer()
+        && request.resource.data.from == me()
+        && chatOk(chat)
+        && request.resource.data.keys().hasOnly([
+          'from',
+          'text',
+          't',
+          'voice',
+          'dur',
+          'mentions',
+          'img',
+          'w',
+          'h',
+          'file',
+          'fname',
+          'fsize',
+          'call',
+          'reply',
+          'music'
+        ])
+        && (!('music' in request.resource.data)
+          || (request.resource.data.music is map
+            && request.resource.data.music.keys().hasOnly(['name', 'size', 'dur', 'parts', 'mime'])
+            && request.resource.data.music.name is string
+            && request.resource.data.music.name.size() <= 150
+            && request.resource.data.music.size is number
+            && request.resource.data.music.dur is number
+            && request.resource.data.music.parts is number
+            && request.resource.data.music.parts >= 1
+            && request.resource.data.music.parts <= 16
+            && request.resource.data.music.mime is string))
+        && (!('reply' in request.resource.data)
+          || (request.resource.data.reply is map
+            && request.resource.data.reply.keys().hasOnly(['id', 'from', 'txt'])
+            && request.resource.data.reply.id is string
+            && request.resource.data.reply.id.size() <= 40
+            && request.resource.data.reply.from is string
+            && request.resource.data.reply.txt is string
+            && request.resource.data.reply.txt.size() <= 140))
+        && (!('call' in request.resource.data)
+          || (request.resource.data.call is map
+            && request.resource.data.call.keys().hasOnly(['dur', 'ans'])
+            && request.resource.data.call.dur is number
+            && request.resource.data.call.ans is bool))
+        && (!('text' in request.resource.data)
+          || request.resource.data.text.size() <= 2000)
+        && (!('voice' in request.resource.data)
+          || request.resource.data.voice.size() < 700000)
+        && (!('img' in request.resource.data)
+          || request.resource.data.img.size() < 700000)
+        && (!('file' in request.resource.data)
+          || request.resource.data.file.size() < 700000)
+        && (!('fname' in request.resource.data)
+          || request.resource.data.fname.size() <= 150);
+
+      allow update: if writer()
+        && chatOk(chat)
+        && resource.data.from == me()
+        && request.resource.data.from == resource.data.from
+        && request.resource.data.t == resource.data.t
+        && resource.data.get('del', false) != true
+        && (
+          (
+            request.resource.data.diff(resource.data)
+              .affectedKeys()
+              .hasOnly(['text', 'edited'])
+            && request.resource.data.edited == true
+            && !('voice' in resource.data)
+            && !('call' in resource.data)
+            && !('music' in resource.data)
+            && request.resource.data.get('text', '').size() <= 2000
+          )
+          ||
+          (
+            request.resource.data.get('del', false) == true
+            && request.resource.data.keys().hasOnly([
+              'from',
+              't',
+              'del'
+            ])
+          )
+        );
+    }
+
+    // Songs are split into small parts, because one document can only hold about 1 MB.
+    match /msgs/{chat}/items/{msg}/parts/{p} {
+      allow read: if member() && chatOk(chat);
+
+      allow create: if writer()
+        && chatOk(chat)
+        && request.resource.data.keys().hasOnly(['by', 'i', 'd'])
+        && request.resource.data.by == me()
+        && request.resource.data.i is number
+        && request.resource.data.d is string
+        && request.resource.data.d.size() <= 700000;
+
+      allow delete: if writer() && resource.data.by == me();
+    }
+
+    // Delivery / read receipts: one small doc per person per chat.
+    // d = newest message time delivered to this person, r = newest message time they read.
+    // Everyone in the chat can read them; only you can write your own, and only forward in time.
+    match /rcpt/{chat}/u/{name} {
+      allow read: if member() && chatOk(chat);
+
+      allow create: if writer()
+        && name == me()
+        && chatOk(chat)
+        && request.resource.data.keys().hasOnly(['d', 'r'])
+        && request.resource.data.get('d', 0) is number
+        && request.resource.data.get('r', 0) is number;
+
+      allow update: if writer()
+        && name == me()
+        && chatOk(chat)
+        && request.resource.data.keys().hasOnly(['d', 'r'])
+        && request.resource.data.get('d', 0) is number
+        && request.resource.data.get('r', 0) is number
+        && request.resource.data.get('d', 0) >= resource.data.get('d', 0)
+        && request.resource.data.get('r', 0) >= resource.data.get('r', 0);
+    }
+
+    // Online / last seen. Everyone signed in can read it, you can only write your own.
+    match /presence/{name} {
+      allow read: if member();
+
+      allow create, update: if writer()
+        && name == me()
+        && request.resource.data.keys().hasOnly(['t', 'on'])
+        && request.resource.data.t is number
+        && request.resource.data.on is bool;
+    }
+
+    match /pings/{id} {
+      allow read: if member()
+        && resource.data.to == me();
+
+      allow delete: if writer()
+        && resource.data.to == me();
+
+      allow create: if writer()
+        && request.resource.data.from == me()
+        && request.resource.data.keys().hasOnly([
+          'from',
+          'to',
+          'chat',
+          'title',
+          'text',
+          't',
+          'kind'
+        ])
+        && (!('kind' in request.resource.data) || request.resource.data.kind == 'call')
+        && (
+          (
+            !request.resource.data.chat.matches('dm_.*')
+            && groupMember(request.resource.data.chat)
+            && request.resource.data.to in get(
+              /databases/$(database)/documents/groups/$(request.resource.data.chat)
+            ).data.members
+          )
+          ||
+          (
+            request.resource.data.chat.matches('dm_.*')
+            && dmParty(request.resource.data.chat)
+            && dmFriends(request.resource.data.chat)
+            && request.resource.data.to == other(
+              request.resource.data.chat.replace('dm_', '').split('__')
+            )
+          )
+        );
+    }
+
+    match /calls/{id} {
+      allow read: if member()
+        && me() in resource.data.invited;
+
+      allow create: if writer()
+        && chatOk(id)
+        && request.resource.data.keys().hasOnly([
+          'invited',
+          'p'
+        ])
+        && me() in request.resource.data.invited
+        && (
+          id.matches('dm_.*')
+          ? request.resource.data.invited.size() == 2
+          : request.resource.data.invited.hasOnly(
+              get(
+                /databases/$(database)/documents/groups/$(id)
+              ).data.members
+            )
+        );
+
+      // Someone who joined the group or meeting after the call started is not in "invited" yet.
+      // They may add themselves (only themselves) and their own heartbeat.
+      allow update: if resource == null
+        || (
+          writer()
+          && request.resource.data.p.diff(resource.data.p)
+              .affectedKeys()
+              .hasOnly([me()])
+          && (
+            (
+              me() in resource.data.invited
+              && request.resource.data.diff(resource.data)
+                  .affectedKeys()
+                  .hasOnly(['p'])
+            )
+            ||
+            (
+              chatOk(id)
+              && !(me() in resource.data.invited)
+              && request.resource.data.diff(resource.data)
+                  .affectedKeys()
+                  .hasOnly(['p', 'invited'])
+              && request.resource.data.invited.hasAll(resource.data.invited)
+              && me() in request.resource.data.invited
+              && request.resource.data.invited.size() == resource.data.invited.size() + 1
+            )
+          )
+        );
+    }
+
+    match /calls/{id}/sig/{s} {
+      allow read: if member()
+        && resource.data.to == me();
+
+      allow delete: if writer()
+        && resource.data.to == me();
+
+      allow create: if writer()
+        && request.resource.data.from == me()
+        && chatOk(id)
+        && request.resource.data.to in get(
+          /databases/$(database)/documents/calls/$(id)
+        ).data.invited;
+    }
+  }
+}
