@@ -4,10 +4,9 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - "index.js"
-      - "package.json"
       - "firebase.json"
       - "firestore.rules"
+      - "firestore.indexes.json"
       - ".github/workflows/functions.yml"
 
 concurrency:
@@ -17,21 +16,13 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - name: Prepare functions folder
-        run: |
-          mkdir -p functions
-          cp index.js functions/index.js
-          cp package.json functions/package.json
-          cd functions
-          npm install --no-audit --no-fund
 
       - name: Save service account
         env:
@@ -40,28 +31,16 @@ jobs:
           test -n "$SA" || { echo "Add the FIREBASE_SERVICE_ACCOUNT secret first"; exit 1; }
           printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
 
-      - name: Find rules file
-        run: |
-          if [ ! -f firestore.rules ]; then
-            f=$(find . -type f -name 'firestore.rules*' -not -path '*/node_modules/*' | head -n 1)
-            if [ -n "$f" ]; then cp "$f" firestore.rules; fi
-          fi
-          if [ ! -f firestore.rules ]; then
-            echo "firestore.rules is missing from the repo"
-            ls -la
-            exit 1
-          fi
-
       - name: Deploy Firestore rules
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
         run: npx -y firebase-tools@13 deploy --only firestore:rules --project group-24984 --non-interactive
 
-      - name: Deploy functions
+      - name: Deploy Firestore indexes
         if: ${{ !cancelled() }}
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
-        run: npx -y firebase-tools@13 deploy --only functions --project group-24984 --non-interactive --force
+        run: npx -y firebase-tools@13 deploy --only firestore:indexes --project group-24984 --non-interactive --force
 
       - name: Remove service account file
         if: always()
