@@ -89,6 +89,7 @@ function api(fn, data){
   data = data || {};
   if (session) data.session = session;
   return fetch(FN + fn, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({data:data})})
+    .catch(function(){ throw new Error("Cannot reach the admin server. The functions are probably not deployed yet. Push index.js to GitHub, wait for the Deploy Firebase run in the Actions tab to turn green, then try again."); })
     .then(function(r){ return r.json().catch(function(){ return {}; }); })
     .then(function(j){
       if (j.error){
